@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dataops-utility
+  namespace: utility
+  labels:
+    app: dataops-utility
+    env: charite
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dataops-utility
+      env: charite
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 33%
+  template:
+    metadata:
+      labels:
+        app: dataops-utility
+        env: charite
+    spec:
+      containers:
+        - name: dataops-utility
+          image: 10.32.42.225:5000/dataops-utility:<VERSION>
+          ports:
+            - containerPort: 5063
+          env:
+          - name: env
+            value: "charite"
+          readinessProbe:
+            tcpSocket:
+              port: 5063
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "1000Mi"
+              cpu: "1"
+            limits:
+              memory: "1000Mi"
+              cpu: "1"
+      nodeSelector:
+        namespace: utility
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dataops-utility
+  namespace: utility
+  labels:
+    app: dataops-utility
+    env: charite
+spec:
+  ports:
+  - name: http
+    port: 5063
+    targetPort: 5063
+  selector:
+    app: dataops-utility
+    env: charite
+  type: ClusterIP
