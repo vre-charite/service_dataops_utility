@@ -1,4 +1,4 @@
 [submodule "services/service_logger"]
 	path = services/service_logger
-	url = https://git.bihealth.org/hadoop/vre/service_logger
+	url = https://git.bihealth.org/hadoop/vre/service_logger.git
         branch = .
