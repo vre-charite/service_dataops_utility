@@ -3,10 +3,7 @@ image: docker:latest
 variables:
   REGISTRY: 10.32.42.225:5000
   CONTAINER_IMAGE: ${REGISTRY}/dataops-ut:${CI_COMMIT_SHORT_SHA}
-
-before_script:
-  - git submodule sync --recursive
-  - git submodule update --init --recursive
+  GIT_SUBMODULE_STRATEGY: recursive
 
 build:
   stage: build
