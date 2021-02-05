@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: dataops-utility
+  name: dataops-ut
   namespace: utility
   labels:
-    app: dataops-utility
+    app: dataops-ut
     env: charite
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: dataops-utility
+      app: dataops-ut
       env: charite
   strategy:
     type: RollingUpdate
@@ -20,12 +20,12 @@ spec:
   template:
     metadata:
       labels:
-        app: dataops-utility
+        app: dataops-ut
         env: charite
     spec:
       containers:
-        - name: dataops-utility
-          image: 10.32.42.225:5000/dataops-utility:<VERSION>
+        - name: dataops-ut
+          image: 10.32.42.225:5000/dataops-ut:<VERSION>
           ports:
             - containerPort: 5063
           env:
@@ -49,10 +49,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: dataops-utility
+  name: dataops-ut
   namespace: utility
   labels:
-    app: dataops-utility
+    app: dataops-ut
     env: charite
 spec:
   ports:
@@ -60,6 +60,6 @@ spec:
     port: 5063
     targetPort: 5063
   selector:
-    app: dataops-utility
+    app: dataops-ut
     env: charite
   type: ClusterIP
