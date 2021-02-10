@@ -17,5 +17,3 @@ class ConfigClass(object):
     # disk mounts
     NFS_ROOT_PATH = "/data/vre-storage"
     VRE_ROOT_PATH = "/vre-data"
-
-    #trigger pipeline
