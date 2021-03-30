@@ -16,6 +16,7 @@ class FiledataMetaPOST(BaseModel):
     process_pipeline: str = ""
     operator: str = ""
     parent_query: dict = {}
+    parent_folder_geid: str = ""
 
 
 class FiledataMetaPOSTResponse(APIResponse):

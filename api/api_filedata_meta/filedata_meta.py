@@ -54,7 +54,9 @@ class FiledataMeta:
             "generate_id": data.generate_id,
             "guid": guid,
             "tags": data.labels,
-            "global_entity_id": geid
+            "global_entity_id": geid,
+            "project_code": data.project_code,
+            "parent_folder_geid": data.parent_folder_geid,
         }
         if data.data_type == "processed":
             json_data["operator"] = data.operator
