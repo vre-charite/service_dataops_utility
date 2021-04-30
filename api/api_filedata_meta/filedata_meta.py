@@ -7,6 +7,7 @@ from resources.cataloguing_manager import CataLoguingManager
 from resources.message_sender import send_message_to_queue
 from resources.geid_shortcut import fetch_geid
 from services.service_logger.logger_factory_service import SrvLoggerFactory
+from resources.error_handler import catch_internal
 from config import ConfigClass
 import os
 import time
@@ -22,6 +23,7 @@ class FiledataMeta:
         self._logger = SrvLoggerFactory('api_file_meta').get_logger()
 
     @router.post('/', response_model=models.FiledataMetaPOSTResponse, summary="Create or Update filedata meta")
+    @catch_internal('api_file_meta')
     async def post(self, data: models.FiledataMetaPOST):
         api_response = models.FiledataMetaPOSTResponse() 
         self._logger.info("Metadata request receieved")
@@ -44,23 +46,25 @@ class FiledataMeta:
         guid = res_cata['guid']
         self._logger.info(f"Request Data:{data}")
 
+        # # hack vre core raw data, if vre vore raw, data_type convert to raw
+        # if data.process_pipeline == 'data_transfer' and data.namespace == "vrecore":
+        #     data.data_type = 'raw'
+
         json_data = {
             "uploader": data.uploader,
             "full_path": data.path + "/" + data.file_name,
             "file_size": data.file_size,
             "description": data.description,
             "namespace": data.namespace,
-            "type": data.data_type,
             "generate_id": data.generate_id,
             "guid": guid,
             "tags": data.labels,
             "global_entity_id": geid,
             "project_code": data.project_code,
             "parent_folder_geid": data.parent_folder_geid,
+            "operator": data.operator,
+            "process_pipeline": data.process_pipeline
         }
-        if data.data_type == "processed":
-            json_data["operator"] = data.operator
-            json_data["process_pipeline"] = data.process_pipeline
 
         # Get dataset id
         dataset_data = {
@@ -68,7 +72,7 @@ class FiledataMeta:
         }
         response = requests.post(ConfigClass.NEO4J_HOST + "/v1/neo4j/nodes/Dataset/query", json=dataset_data)
         if response.status_code != 200:
-            api_response.error_msg = "Neo4j error:" + str(response.json())
+            api_response.error_msg = "Get dataset id:" + str(response.json())
             api_response.code = EAPIResponseCode.internal_error
             return api_response.json_response()
         json_data["project_id"] = response.json()[0]["id"]
@@ -76,7 +80,7 @@ class FiledataMeta:
         # Create the file entity
         response = requests.post(ConfigClass.FILEINFO_HOST+ "/v1/files", json=json_data)
         if response.status_code != 200:
-            api_response.error_msg = "Neo4j error:" + str(response.json())
+            api_response.error_msg = "Create the file entity error:" + str(response.json())
             api_response.code = EAPIResponseCode.internal_error
             return api_response.json_response()
         node = response.json()['result']
@@ -93,6 +97,7 @@ class FiledataMeta:
             relation_data = {
                 "start_id": input_file_id,
                 "end_id": node["id"],
+                "properties": {"operator": data.operator}
             }
             pipeline_name = data.process_pipeline
             self._logger.info(relation_data)
@@ -166,7 +171,11 @@ class FiledataMeta:
                     "action": "data_delete",
                     "target_status": "running",
                     "project_code": data.project_code,
-                    "operator": data.operator
+                    "operator": data.operator,
+                    "payload": {
+                        "zone": namespace,
+                        "frontend_zone": get_frontend_zone(namespace)
+                    }
                 }
                 status_post_res = requests.post(url=ConfigClass.DATA_OPS_GR + "/v1/file/actions/status",
                     json=status_post_json)
@@ -181,3 +190,13 @@ class FiledataMeta:
             'message': 'Succeed',
         }
         return api_response.json_response()
+
+def get_frontend_zone(my_disk_namespace: str):
+    '''
+    disk namespace to path
+    '''
+    return {
+        "greenroom": "Green Room",
+        "vre": "VRE Core",
+        "vrecore": "VRE Core"
+    }.get(my_disk_namespace, None)

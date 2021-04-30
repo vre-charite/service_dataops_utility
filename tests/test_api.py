@@ -1,5 +1,5 @@
 import unittest
-from tests.prepare_test import SetupTest
+from tests.prepare_test import SetUpTest
 from tests.logger import Logger
 
 

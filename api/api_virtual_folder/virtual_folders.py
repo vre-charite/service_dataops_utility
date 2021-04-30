@@ -9,6 +9,7 @@ from models.base_models import APIResponse, PaginationRequest, EAPIResponseCode
 from models import virtual_folder_models as models
 from auth import jwt_required 
 from resources.dependency import check_folder_permissions
+from resources.geid_shortcut import fetch_geid
 
 router = APIRouter()
 
@@ -26,6 +27,8 @@ class VirtualFolder:
         payload = {
             "start_label": "User",
             "end_label": "VirtualFolder",
+            "order_by": "time_created",
+            "order_type": "ASC",
             "start_params": {
                 "name": username
             },
@@ -36,9 +39,22 @@ class VirtualFolder:
         result = requests.post(url, json=payload)
         if result.status_code != 200:
             api_response.code = result.status_code
-            api_response.error_msg = "Neo4j error"
+            api_response.error_msg = "Get folder error"
         result = result.json()
-        folders = [i["end_node"] for i in result]
+        folders = []
+        for relation in result:
+            node = relation["end_node"]
+            folders.append({
+                "global_entity_id": node["global_entity_id"],
+                "identity": node["id"],
+                "labels": node["labels"],
+                "properties": {
+                    "name": node["name"],
+                    "time_created": node["time_created"],
+                    "time_lastmodified": node["time_lastmodified"],
+                    "container_id": node["container_id"],
+                }
+            })
         api_response.result = folders
         return api_response.json_response()
 
@@ -119,10 +135,11 @@ class VirtualFolder:
         payload = {
             "name": folder_name,
             "container_id": container_id,
+            "global_entity_id": fetch_geid(),
         }
         result = requests.post(url, json=payload)
         if result.status_code != 200:
-            api_response.error_msg = "Neo4j Error:" + result.json()
+            api_response.error_msg = "Create vfolder in neo4j:" + result.json()
             api_response.code = EAPIResponseCode.internal_error
             return api_response.json_response()
         vfolder = result.json()[0]
@@ -136,9 +153,73 @@ class VirtualFolder:
         }
         result = requests.post(url, json=payload)
         if result.status_code != 200:
-            api_response.error_msg = "Neo4j Error:" + result.json()
+            api_response.error_msg = "Add relation to user Error:" + result.json()
             api_response.code = EAPIResponseCode.internal_error
             return api_response.json_response()
+        return api_response.json_response()
+
+    @router.put('/', response_model=models.VirtualFolderPUTResponse, summary="Bulk update virtual folders")
+    async def put(self, data: models.VirtualFolderPUT):
+        api_response = models.VirtualFolderPOSTResponse()
+        results = []
+        for vfolder in data.vfolders:
+            # check required attributes
+            for attr in ["name", "geid"]:
+                if not vfolder.get(attr):
+                    api_response.error_msg = f"Missing required attribute {attr}"
+                    api_response.code = EAPIResponseCode.bad_request
+                    return api_response.json_response()
+
+            # Check folder belongs to user
+            url = ConfigClass.NEO4J_SERVICE + f"relations/query"
+            user_id = self.current_identity["user_id"]
+            payload = {
+                "start_label": "User",
+                "end_label": "VirtualFolder",
+                "start_params": {
+                    "id": int(user_id),
+                },
+                "end_params": {
+                    "global_entity_id": vfolder["geid"],
+                },
+            }
+            result = requests.post(url, json=payload)
+            if result.status_code != 200:
+                api_response.code = EAPIResponseCode.internal_error
+                api_response.error_msg = "Neo4j Error: " + result.json()
+                return api_response.json_response()
+            result = result.json()
+            if len(result) < 1:
+                api_response.code = EAPIResponseCode.forbidden
+                api_response.error_msg = "Permission Denied"
+                return api_response.json_response()
+
+            # Get vfolder by geid
+            url = ConfigClass.NEO4J_SERVICE + f"nodes/VirtualFolder/query"
+            payload = {
+                "global_entity_id": vfolder["geid"],
+            }
+            result = requests.post(url, json=payload)
+            if result.status_code != 200:
+                api_response.error_msg = "Neo4j Error: " + result.json()
+                api_response.code = EAPIResponseCode.internal_error
+                return api_response.json_response()
+            vfolder_node = result.json()[0]
+            folder_id = vfolder_node["id"]
+
+            # update vfolder in neo4j
+            url = ConfigClass.NEO4J_SERVICE + f"nodes/VirtualFolder/node/{folder_id}"
+            payload = {
+                "name": vfolder["name"],
+            }
+            result = requests.put(url, json=payload)
+            if result.status_code != 200:
+                api_response.error_msg = "Neo4j Error: " + result.json()
+                api_response.code = EAPIResponseCode.internal_error
+                return api_response.json_response()
+            vfolder = result.json()[0]
+            results.append(vfolder)
+        api_response.result = results
         return api_response.json_response()
 
 
@@ -168,7 +249,7 @@ class VirtualFolderFile:
         }
         result = requests.post(url, json=payload)
         if result.status_code != 200:
-            api_response.error_msg = "Neo4j error:" + result.json()
+            api_response.error_msg = "Get file by folder relation error:" + result.json()
             api_response.code = EAPIResponseCode.internal_error
             return api_response.json_response()
         result = result.json()
@@ -202,7 +283,7 @@ class VirtualFolderFile:
         }
         result = requests.put(url, json=payload)
         if result.status_code != 200:
-            api_response.error_msg = "Neo4j Error: " + result.json()
+            api_response.error_msg = "update vfolder in neo4j Error: " + result.json()
             api_response.code = EAPIResponseCode.internal_error
             return api_response.json_response()
         vfolder = result.json()[0]
@@ -216,7 +297,7 @@ class VirtualFolderFile:
         result = requests.delete(url)
         if result.status_code != 200:
             api_response.code = EAPIResponseCode.internal_error
-            api_response.error_msg = "Neo4j Error: " + result.json()
+            api_response.error_msg = "VirtualFolderFileDELETEResponse Error: " + result.json()
             return api_response.json_response()
         api_response.result = 'success'
         return api_response.json_response()
@@ -247,7 +328,7 @@ class FileBulk:
         result = requests.post(url, json=payload)
         if result.status_code != 200:
             api_response.code = EAPIResponseCode.internal_error
-            api_response.error_msg = "Neo4j Error: " + result.json()
+            api_response.error_msg = "Check folder belongs to user Error: " + result.json()
             return api_response.json_response()
         result = result.json()
         if len(result) < 1:
@@ -262,7 +343,7 @@ class FileBulk:
         result = requests.get(url)
         if result.status_code != 200:
             api_response.code = EAPIResponseCode.internal_error
-            api_response.error_msg = "Neo4j Error: " + result.json()
+            api_response.error_msg = "Get folders dataset Error: " + result.json()
             return api_response.json_response()
         if len(result.json()) < 1:
             api_response.code = EAPIResponseCode.not_found
@@ -288,7 +369,7 @@ class FileBulk:
             result = requests.post(url, json=payload)
             if result.status_code != 200:
                 api_response.code = EAPIResponseCode.internal_error
-                api_response.error_msg = "Neo4j Error: " + result.json()
+                api_response.error_msg = "Duplicate check Error: " + result.json()
                 return api_response.json_response()
 
             if len(result.json()) > 0:
@@ -329,7 +410,7 @@ class FileBulk:
             result = requests.post(url, json=payload)
             if result.status_code != 200:
                 api_response.code = EAPIResponseCode.internal_error
-                api_response.error_msg = "Neo4j Error: " + result.json()
+                api_response.error_msg = "Add folder relation to file Error: " + result.json()
                 return api_response.json_response()
 
         if duplicate:
@@ -359,7 +440,7 @@ class FileBulk:
         result = requests.post(url, json=payload)
         if result.status_code != 200:
             api_response.code = EAPIResponseCode.internal_error
-            api_response.error_msg = "Neo4j Error: " + result.json()
+            api_response.error_msg = "Check folder belongs to user Error: " + result.json()
             return api_response.json_response()
         result = result.json()
         if len(result) < 1:
@@ -383,7 +464,7 @@ class FileBulk:
             result = requests.post(url, json=payload)
             if result.status_code != 200:
                 api_response.code = EAPIResponseCode.internal_error
-                api_response.error_msg = "Neo4j Error: " + result.json()
+                api_response.error_msg = "Get file Error: " + result.json()
                 return api_response.json_response()
             result = result.json()
             if len(result) > 1:
@@ -399,7 +480,7 @@ class FileBulk:
             result = requests.delete(ConfigClass.NEO4J_SERVICE + "relations", params=relation_query)
             if result.status_code != 200:
                 api_response.code = EAPIResponseCode.internal_error
-                api_response.error_msg = "Neo4j Error: " + result.json()
+                api_response.error_msg = "Remove relationship from neo4j Error: " + result.json()
                 return api_response.json_response()
         api_response.result = 'success'
         return api_response.json_response()

@@ -14,14 +14,12 @@ class CataLoguingManager:
             "file_size": post_form.file_size,
             "description": post_form.description,
             "namespace": post_form.namespace,
-            "data_type": post_form.data_type,
             "project_code": post_form.project_code,
             "labels": post_form.labels,
-            "global_entity_id": geid
+            "global_entity_id": geid,
+            "operator": post_form.operator,
+            "processed_pipeline": post_form.process_pipeline
         }
-        if post_form.data_type == "processed":
-            req_postform["operator"] = post_form.operator
-            req_postform["processed_pipeline"] = post_form.process_pipeline
         res = requests.post(json=req_postform, url=self.base_url + filedata_endpoint)
         if res.status_code == 200:
             json_payload = res.json()

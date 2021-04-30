@@ -32,6 +32,22 @@ class VirtualFolderPOSTResponse(APIResponse):
           }
       )
 
+### VirtulFolderFilePUT ###
+class VirtualFolderPUT(BaseModel):
+    vfolders: list 
+
+
+class VirtualFolderPUTResponse(APIResponse):
+    result: dict = Field([], example=[{   
+              'container_id': 1129,
+              'id': 1211,
+              'labels': ['VirtualFolder'],
+              'name': 'limittestfdsad',
+              'time_created': '2020-12-09T15:08:29',
+              'time_lastmodified': '2020-12-09T15:08:29'
+          }]
+      )
+
 
 ### VirtulFolderFilePUT ###
 class VirtualFolderFilePUT(BaseModel):

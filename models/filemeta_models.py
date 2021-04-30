@@ -9,7 +9,6 @@ class FiledataMetaPOST(BaseModel):
     file_size: int 
     description: str 
     namespace: str 
-    data_type: str
     labels: list 
     project_code: str 
     generate_id: str = ""
