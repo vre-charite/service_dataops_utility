@@ -4,8 +4,8 @@ from models import filemeta_models as models
 from models import file_deletion_models as deletion_models
 from models.base_models import EAPIResponseCode
 from resources.cataloguing_manager import CataLoguingManager
-from resources.message_sender import send_message_to_queue
-from resources.geid_shortcut import fetch_geid
+from resources.helpers import send_message_to_queue
+from resources.helpers import fetch_geid
 from services.service_logger.logger_factory_service import SrvLoggerFactory
 from resources.error_handler import catch_internal
 from config import ConfigClass
@@ -13,9 +13,8 @@ import os
 import time
 import requests
 
-import requests
-
 router = APIRouter()
+
 
 @cbv(router)
 class FiledataMeta:
@@ -25,7 +24,7 @@ class FiledataMeta:
     @router.post('/', response_model=models.FiledataMetaPOSTResponse, summary="Create or Update filedata meta")
     @catch_internal('api_file_meta')
     async def post(self, data: models.FiledataMetaPOST):
-        api_response = models.FiledataMetaPOSTResponse() 
+        api_response = models.FiledataMetaPOSTResponse()
         self._logger.info("Metadata request receieved")
         cata_mgr = CataLoguingManager()
 
@@ -70,7 +69,7 @@ class FiledataMeta:
         dataset_data = {
             "code": data.project_code,
         }
-        response = requests.post(ConfigClass.NEO4J_HOST + "/v1/neo4j/nodes/Dataset/query", json=dataset_data)
+        response = requests.post(ConfigClass.NEO4J_SERVICE + "nodes/Dataset/query", json=dataset_data)
         if response.status_code != 200:
             api_response.error_msg = "Get dataset id:" + str(response.json())
             api_response.code = EAPIResponseCode.internal_error
@@ -78,9 +77,10 @@ class FiledataMeta:
         json_data["project_id"] = response.json()[0]["id"]
 
         # Create the file entity
-        response = requests.post(ConfigClass.FILEINFO_HOST+ "/v1/files", json=json_data)
+        response = requests.post(ConfigClass.ENTITYINFO_SERVICE + "files", json=json_data)
         if response.status_code != 200:
-            api_response.error_msg = "Create the file entity error:" + str(response.json())
+            api_response.error_msg = "Create the file entity error:" + \
+                str(response.json())
             api_response.code = EAPIResponseCode.internal_error
             return api_response.json_response()
         node = response.json()['result']
@@ -89,7 +89,7 @@ class FiledataMeta:
 
         if data.parent_query:
             # Get parent file
-            response = requests.post(ConfigClass.NEO4J_HOST + "/v1/neo4j/nodes/File/query", json=data.parent_query)
+            response = requests.post(ConfigClass.NEO4J_SERVICE + "nodes/File/query", json=data.parent_query)
             self._logger.info(response.json())
             input_file_id = response.json()[0]["id"]
 
@@ -101,14 +101,18 @@ class FiledataMeta:
             }
             pipeline_name = data.process_pipeline
             self._logger.info(relation_data)
-            response = requests.post(ConfigClass.NEO4J_HOST + f"/v1/neo4j/relations/{data.process_pipeline}", json=relation_data)
+            response = requests.post(ConfigClass.NEO4J_SERVICE + f"relations/{data.process_pipeline}", json=relation_data)
             self._logger.info(response.json())
 
         api_response.result = node
         return api_response.json_response()
 
-    @router.delete('/', response_model=deletion_models.FiledataDeletionPOSTResponse, summary="Archive filedata")
+    @router.delete('/', response_model=deletion_models.FiledataDeletionPOSTResponse, summary="Archive filedata",
+                   deprecated=True)
     async def delete(self, data: deletion_models.FiledataDeletionPOST):
+        '''
+        deprecated
+        '''
         api_response = deletion_models.FiledataDeletionPOSTResponse()
 
         for record in data.to_delete:
@@ -129,7 +133,8 @@ class FiledataMeta:
 
                 # Check if path valid to be deleted
                 check_url = ConfigClass.DATA_OPS_GR + "/v1/file-exists"
-                check_result = requests.post(url=check_url, json={"full_path": input_path})
+                check_result = requests.post(
+                    url=check_url, json={"full_path": input_path})
                 check_res_bool = check_result.json()["result"]
 
                 if not check_res_bool:
@@ -150,8 +155,8 @@ class FiledataMeta:
                         "job_id": data.job_id,
                         "operator": data.operator,
                         "input_path": input_path,
-                        "output_path": disk_path  + "/TRASH/" + data.project_code  + "/" + new_file_name,
-                        "trash_path": disk_path  + "/TRASH",
+                        "output_path": disk_path + "/TRASH/" + data.project_code + "/" + new_file_name,
+                        "trash_path": disk_path + "/TRASH",
                         "generate_id": record.get('generate_id', 'undefined'),
                         "generic": True,
                         "uploader": record.get("uploader", ""),
@@ -178,11 +183,12 @@ class FiledataMeta:
                     }
                 }
                 status_post_res = requests.post(url=ConfigClass.DATA_OPS_GR + "/v1/file/actions/status",
-                    json=status_post_json)
+                                                json=status_post_json)
             except Exception as e:
                 api_response.code = EAPIResponseCode.internal_error
                 api_response.result = None
-                api_response.error_msg = "Error when sending tasks to the queue: " + str(e)
+                api_response.error_msg = "Error when sending tasks to the queue: " + \
+                    str(e)
                 print(api_response.error_msg)
                 return api_response.json_response()
         api_response.code = EAPIResponseCode.success
@@ -190,6 +196,7 @@ class FiledataMeta:
             'message': 'Succeed',
         }
         return api_response.json_response()
+
 
 def get_frontend_zone(my_disk_namespace: str):
     '''

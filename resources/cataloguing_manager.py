@@ -3,9 +3,9 @@ import requests
 from models import filemeta_models as models
 
 class CataLoguingManager:
-    base_url = ConfigClass.METADATA_API
+    base_url = ConfigClass.CATALOGUING_SERVICE_V2
     def create_file_meta(self, post_form: models.FiledataMetaPOST, geid):
-        filedata_endpoint = '/v2/filedata'
+        filedata_endpoint = 'filedata'
         print(post_form.labels)
         req_postform = {
             "uploader": post_form.uploader,

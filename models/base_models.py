@@ -11,6 +11,7 @@ class EAPIResponseCode(Enum):
     forbidden = 403
     unauthorized = 401
     conflict = 409
+    accepted = 202
 
 
 class APIResponse(BaseModel):

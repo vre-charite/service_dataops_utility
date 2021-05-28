@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from app import app
 from config import ConfigClass
-from resources.geid_shortcut import fetch_geid
+from resources.helpers import fetch_geid
 import os
 
 class SetUpTest:
@@ -69,7 +69,7 @@ class SetUpTest:
     def create_project(self, code, discoverable='true'):
         self.log.info("\n")
         self.log.info("Preparing testing project".ljust(80, '-'))
-        testing_api = ConfigClass.NEO4J_HOST + "/v1/neo4j/nodes/Dataset"
+        testing_api = ConfigClass.NEO4J_SERVICE + "nodes/Dataset"
         params = {"name": "DataopsUTUnitTest",
                   "path": code,
                   "code": code,
@@ -92,10 +92,16 @@ class SetUpTest:
             self.log.info(f"ERROR CREATING PROJECT: {e}")
             raise e
 
-    def delete_node(self, label, node_id):
+    def delete_node(self, label, input_nodeid):
         self.log.info("\n")
         self.log.info("Preparing delete node".ljust(80, '-'))
-        delete_api = ConfigClass.NEO4J_HOST + f"/v1/neo4j/nodes/{label}/node/{node_id}"
+        if label == "VirtualFolder":
+            node_id = self.get_id(label, input_nodeid)
+        else:
+            node_id = input_nodeid
+        if node_id is None:
+            self.log.info(f"GET NODE ID FAIL: node_geid {input_nodeid}")
+        delete_api = ConfigClass.NEO4J_SERVICE + f"nodes/{label}/node/{node_id}"
         try:
             self.log.info(f"DELETE Project: {node_id}")
             delete_res = requests.delete(delete_api)
@@ -105,3 +111,17 @@ class SetUpTest:
             self.log.info(f"ERROR DELETING PROJECT: {e}")
             self.log.info(f"PLEASE DELETE THE PROJECT MANUALLY WITH ID: {node_id}")
             raise e
+    
+    def get_id(self, label, node_geid):
+        url = ConfigClass.NEO4J_SERVICE + f"nodes/{label}/query"
+        payload = {
+            "global_entity_id": node_geid
+        }
+        result = requests.post(url, json = payload)
+        if result.status_code != 200 or result.json() == []:
+            return None
+        result = result.json()[0]
+        node_id = result["id"]
+        return node_id
+
+

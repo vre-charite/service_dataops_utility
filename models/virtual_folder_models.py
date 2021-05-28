@@ -5,12 +5,18 @@ from models.base_models import APIResponse
 ### VirtulFolderFileGET ###
 class VirtualFolderGETResponse(APIResponse):
     result: list = Field([], example=[{   
-            'container_id': 1129,
-            'id': 29,
-            'labels': ['VirtualFolder'],
-            'name': 'test-folder',
-            'time_created': '2020-12-01T20:45:25',
-            'time_lastmodified': '2020-12-01T20:45:25'},
+            "global_entity_id": "d25a02b0-4d85-4566-9948-a37eac679156-1621009057",
+            "identity": 5366,
+            "labels": [
+                "VirtualFolder"
+            ],
+            "properties": {
+                "name": "123",
+                "time_created": "2021-05-14T16:17:37",
+                "time_lastmodified": "2021-05-14T16:17:37",
+                "container_id": 5118
+                }
+            }
         ]
     )
 
@@ -18,13 +24,13 @@ class VirtualFolderGETResponse(APIResponse):
 ### VirtulFolderFilePOST ###
 class VirtualFolderPOST(BaseModel):
     name: str 
-    container_id: int 
+    project_geid: str 
 
 
 class VirtualFolderPOSTResponse(APIResponse):
     result: dict = Field({}, example={   
               'container_id': 1129,
-              'id': 1211,
+              'geid': "4134bc9c-7adc-458d-bc49-6b15809a09a5-1621275230",
               'labels': ['VirtualFolder'],
               'name': 'limittestfdsad',
               'time_created': '2020-12-09T15:08:29',
@@ -34,13 +40,13 @@ class VirtualFolderPOSTResponse(APIResponse):
 
 ### VirtulFolderFilePUT ###
 class VirtualFolderPUT(BaseModel):
-    vfolders: list 
+    collections: list 
 
 
 class VirtualFolderPUTResponse(APIResponse):
     result: dict = Field([], example=[{   
               'container_id': 1129,
-              'id': 1211,
+              'geid': "4134bc9c-7adc-458d-bc49-6b15809a09a5-1621275230",
               'labels': ['VirtualFolder'],
               'name': 'limittestfdsad',
               'time_created': '2020-12-09T15:08:29',
