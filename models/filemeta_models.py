@@ -2,24 +2,27 @@ from pydantic import BaseModel, Field
 from models.base_models import APIResponse
 
 ### FiledataMeta ###
+
+
 class FiledataMetaPOST(BaseModel):
-    uploader: str 
-    file_name: str 
-    path: str 
-    file_size: int 
-    description: str 
-    namespace: str 
-    labels: list 
-    project_code: str 
+    uploader: str
+    file_name: str
+    path: str
+    file_size: int
+    description: str
+    namespace: str
+    labels: list
+    project_code: str
     generate_id: str = ""
     process_pipeline: str = ""
     operator: str = ""
     parent_query: dict = {}
     parent_folder_geid: str = ""
+    original_geid: str = None
 
 
 class FiledataMetaPOSTResponse(APIResponse):
-    result: dict = Field({}, example={   
+    result: dict = Field({}, example={
         'archived': False,
         'file_size': 1024,
         'full_path': '/data/vre-storage/generate/raw/BCD-1234_file_2.aacn',
@@ -36,5 +39,5 @@ class FiledataMetaPOSTResponse(APIResponse):
         'type': 'processed',
         'uploader': 'admin',
         'operator': 'admin'
-      }
-  )
+    }
+    )

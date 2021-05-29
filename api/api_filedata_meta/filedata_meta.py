@@ -62,14 +62,20 @@ class FiledataMeta:
             "project_code": data.project_code,
             "parent_folder_geid": data.parent_folder_geid,
             "operator": data.operator,
-            "process_pipeline": data.process_pipeline
+            "process_pipeline": data.process_pipeline,
         }
-
+        parent_query = data.parent_query
+        self._logger.info(
+            f"parent_query:{parent_query}, type: {type(parent_query)}")
+        if "original_geid" in parent_query:
+            json_data["original_geid"] = parent_query["original_geid"]
+        self._logger.info(f"Create file data:{json_data}")
         # Get dataset id
         dataset_data = {
             "code": data.project_code,
         }
-        response = requests.post(ConfigClass.NEO4J_SERVICE + "nodes/Dataset/query", json=dataset_data)
+        response = requests.post(
+            ConfigClass.NEO4J_SERVICE + "nodes/Dataset/query", json=dataset_data)
         if response.status_code != 200:
             api_response.error_msg = "Get dataset id:" + str(response.json())
             api_response.code = EAPIResponseCode.internal_error
@@ -77,7 +83,8 @@ class FiledataMeta:
         json_data["project_id"] = response.json()[0]["id"]
 
         # Create the file entity
-        response = requests.post(ConfigClass.ENTITYINFO_SERVICE + "files", json=json_data)
+        response = requests.post(
+            ConfigClass.ENTITYINFO_SERVICE + "files", json=json_data)
         if response.status_code != 200:
             api_response.error_msg = "Create the file entity error:" + \
                 str(response.json())
@@ -88,8 +95,17 @@ class FiledataMeta:
         self._logger.info(data.parent_query)
 
         if data.parent_query:
+            parent_query_post_form = {
+            }
+            if data.parent_query.get("full_path"):
+                parent_query_post_form["full_path"] = data.parent_query.get("full_path")
+            if data.parent_query.get("geid"):
+                parent_query_post_form["global_entity_id"] = data.parent_query.get("geid")
+            if data.parent_query.get("global_entity_id"):
+                parent_query_post_form["global_entity_id"] = data.parent_query.get("global_entity_id")
             # Get parent file
-            response = requests.post(ConfigClass.NEO4J_SERVICE + "nodes/File/query", json=data.parent_query)
+            response = requests.post(
+                ConfigClass.NEO4J_SERVICE + "nodes/File/query", json=parent_query_post_form)
             self._logger.info(response.json())
             input_file_id = response.json()[0]["id"]
 
@@ -101,7 +117,8 @@ class FiledataMeta:
             }
             pipeline_name = data.process_pipeline
             self._logger.info(relation_data)
-            response = requests.post(ConfigClass.NEO4J_SERVICE + f"relations/{data.process_pipeline}", json=relation_data)
+            response = requests.post(
+                ConfigClass.NEO4J_SERVICE + f"relations/{data.process_pipeline}", json=relation_data)
             self._logger.info(response.json())
 
         api_response.result = node
