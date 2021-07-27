@@ -7,7 +7,7 @@ from models import file_ops_models as models
 from commons.logger_services.logger_factory_service import SrvLoggerFactory
 from commons.data_providers.redis import SrvRedisSingleton
 from .validations import validate_operation, validate_project
-from .validation_copy import copy_validation
+from .validation_copy import copy_validation, repeated_check
 
 router = APIRouter()
 
@@ -17,6 +17,26 @@ class FileOperationsValidate:
     def __init__(self):
         self._logger = SrvLoggerFactory(
             'api_file_operations_validate').get_logger()
+
+    @router.post('/repeat-check',  summary="File operations repeated check api, validate file operation job")
+    @catch_internal('api_file_operations_validate')
+    async def repeat_check(self, data: models.FileOperationsPOST):
+        api_response = APIResponse()
+        # permission control, operation lock
+        # selete check worker
+        job_dispatcher = {
+            "copy": repeated_check
+        }.get(data.operation, None)
+        if not job_dispatcher:
+            api_response.code = EAPIResponseCode.bad_request
+            api_response.error_msg = "Invalid operation"
+            return api_response.json_response()
+        code, result = job_dispatcher(self._logger, data)
+        api_response.code = code
+        if not api_response.code == EAPIResponseCode.success:
+            api_response.error_msg = "Error occured"
+        api_response.result = result
+        return api_response.json_response()
 
     @router.post('/',  summary="File operations api, validate file operation job")
     @catch_internal('api_file_operations_validate')

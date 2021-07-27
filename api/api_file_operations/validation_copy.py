@@ -1,8 +1,11 @@
 import os
 import asyncio
 from resources.helpers import get_resource_bygeid, location_decoder, \
-    get_connected_nodes
+    get_connected_nodes, fetch_geid
 from .validations import validate_operation, validate_file_repeated
+from models import file_ops_models as models
+from models.base_models import EAPIResponseCode, APIResponse
+from .validations import validate_project, validate_file_repeated, validate_folder_repeated
 
 async def copy_validation(project_code, to_validate, destination_geid, operation, srv_redis):
     validations = []
@@ -98,6 +101,153 @@ async def copy_thread(destination_geid, project_code, node,
         dest_validation['found'] = found['global_entity_id']
         dest_validation['found_name'] = found['name']
 
+def repeated_check(_logger, data: models.FileOperationsPOST):
+    '''
+    return tuple response_code, worker_result
+    '''
+    # validate project
+    project_validation_code, validation_result = validate_project(
+        data.project_geid)
+    if project_validation_code != EAPIResponseCode.success:
+        return project_validation_code, validation_result
+    project_info = validation_result
+    project_code = validation_result.get("code", None)
+
+    # validate payload
+    def validate_payload(payload):
+        if not type(payload) == dict:
+            return False, "payload must be an object"
+        if not "targets" in payload:
+            return False, "targets required"
+        if not type(payload["targets"]) == list:
+            return False, "targets must be a list of objects"
+        for target in payload["targets"]:
+            if "geid" not in target:
+                return False, "target must have a valid geid"
+        return True, "validated"
+    validated, validation_result = validate_payload(data.payload)
+    if not validated:
+        return EAPIResponseCode.bad_request, "Invalid payload: " + validation_result
+
+    # validate destination
+    destination_geid = data.payload.get('destination', None)
+    node_destination = None
+    if destination_geid:
+        node_destination = get_resource_bygeid(destination_geid)
+        node_destination['resource_type'] = get_resource_type(
+            node_destination['labels'])
+        if not node_destination['resource_type'] in ['Folder', 'Container']:
+            return EAPIResponseCode.bad_request, "Invalid destination type: " + destination_geid
+
+    # validate targets
+    targets = data.payload["targets"]
+    to_validate_repeat_geids = []
+    repeated = []
+
+    def validate_targets(targets: list):
+        fetched = []
+        try:
+            for target in targets:
+                # get source file
+                source = get_resource_bygeid(target['geid'])
+                if target.get("rename"):
+                    source["rename"] = target.get("rename")
+                source['resource_type'] = get_resource_type(source['labels'])
+                if not source['resource_type'] in ['File', 'Folder']:
+                    raise Exception('Invalid target type(only support File or Folder): ' + str(source))
+                fetched.append(source)
+                to_validate_repeat_geids.append(source['global_entity_id'])
+            return True, fetched
+        except Exception as err:
+            return False, str("validate target failed: " + str(err))
+    validated, validation_result = validate_targets(targets)
+    if not validated:
+        return EAPIResponseCode.bad_request, validation_result
+
+    sources = validation_result
+
+    flattened_sources = [
+        node for node in sources if node['resource_type'] == "File"]
+    # flatten sources
+    for source in sources:
+        # append path and attrs
+        if source["resource_type"] == "Folder":
+            nodes_child = get_connected_nodes(
+                source['global_entity_id'], "output")
+            nodes_child_files = [
+                node for node in nodes_child if "File" in node["labels"]]
+
+            # check folder repeated
+            target_folder_relative_path = ""
+            if node_destination and node_destination['resource_type'] == 'Folder':
+                target_folder_relative_path = os.path.join(
+                node_destination['folder_relative_path'], node_destination['name'])
+            output_folder_name = source.get('rename', source['name'])
+            is_valid, found = validate_folder_repeated(
+            "VRECore", project_code, target_folder_relative_path, output_folder_name)
+            if not is_valid:
+                repeated_path = os.path.join(target_folder_relative_path, output_folder_name)
+                repeated.append({
+                    'error': 'entity-exist',
+                    'is_valid': is_valid,
+                    "geid": source['global_entity_id'],
+                    'found': found['global_entity_id'],
+                    'found_name': repeated_path
+                })
+
+            # add other attributes
+            for node in nodes_child_files:
+                node['parent_folder'] = source
+                input_nodes = get_connected_nodes(
+                    node["global_entity_id"], "input")
+                input_nodes = [
+                    node for node in input_nodes if 'Folder' in node['labels']]
+                input_nodes.sort(key=lambda f: f['folder_level'])
+                found_source_node = [
+                    node for node in input_nodes if node['global_entity_id'] == source['global_entity_id']][0]
+                path_relative_to_source_path = ''
+                source_index = input_nodes.index(found_source_node)
+                folder_name_list = [node['name']
+                                    for node in input_nodes[source_index + 1:]]
+                path_relative_to_source_path = os.sep.join(folder_name_list)
+                node['path_relative_to_source_path'] = path_relative_to_source_path
+                node['ouput_relative_path'] = os.path.join(
+                    output_folder_name, path_relative_to_source_path)
+            flattened_sources += nodes_child_files
+
+    # update input output path
+    for source in flattened_sources:
+        source['resource_type'] = get_resource_type(source['labels'])
+        location = source['location']
+        ingestion_type, ingestion_host, ingestion_path = location_decoder(
+            location)
+        source['ingestion_type'] = ingestion_type
+        source['ingestion_host'] = ingestion_host
+        source['ingestion_path'] = ingestion_path
+        ouput_relative_path = source.get('ouput_relative_path', '')
+        input_path, output_path = get_output_payload(
+            source, node_destination, ouput_relative_path=ouput_relative_path)
+        source['input_path'] = input_path
+        source['output_path'] = output_path
+        # validate repeated
+        if source['global_entity_id'] in to_validate_repeat_geids:
+            host = "{}://{}".format(ingestion_type, ingestion_host)
+            bucket = "core-" + project_info["code"] + "/"
+            dest_location = os.path.join(host, bucket + source['output_path'])
+            is_valid, found = validate_file_repeated(
+                "VRECore", project_code, dest_location)
+            if not is_valid:
+                repeated.append({
+                    'error': 'entity-exist',
+                    'is_valid': is_valid,
+                    "geid": source['global_entity_id'],
+                    'found': found['global_entity_id'],
+                    'found_name': source['output_path']
+                })
+    if len(repeated) > 0:
+        return EAPIResponseCode.conflict, repeated
+
+    return EAPIResponseCode.success, []
 
 def get_resource_type(labels: list):
     '''
@@ -108,3 +258,28 @@ def get_resource_type(labels: list):
         if label in resources:
             return label
     return None
+
+def get_output_payload(file_node, destination=None, ouput_relative_path=''):
+    '''
+    return inputpath, outputpath
+    '''
+    location = file_node['location']
+    splits_loaction = location.split("://")
+    ingestion_type = file_node['ingestion_type']
+    ingestion_host = file_node['ingestion_host']
+    ingestion_path = file_node['ingestion_path']
+    if ingestion_type == "minio":
+        splits_ingestion = ingestion_path.split("/", 1)
+        source_bucket_name = splits_ingestion[0]
+        source_object_name = splits_ingestion[1]
+        path, source_name = os.path.split(source_object_name)
+        if destination and destination['resource_type'] == 'Folder':
+            path = os.path.join(
+                destination['folder_relative_path'], destination['name'])
+        copied_name = file_node['rename'] if file_node.get(
+            'rename') else source_name
+        output_path = os.path.join(path, ouput_relative_path, copied_name)
+        root_folder = path.split('/')[0]
+        if not destination:
+            output_path = os.path.join(root_folder, ouput_relative_path, copied_name)
+        return source_object_name, output_path
