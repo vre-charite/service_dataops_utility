@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from config import ConfigClass
 from models.base_models import APIResponse, PaginationRequest, EAPIResponseCode
 from models import virtual_folder_models as models
-from auth import jwt_required 
 from resources.dependency import check_folder_permissions
 from resources.helpers import fetch_geid
 import copy
@@ -16,9 +15,8 @@ router = APIRouter()
 
 @cbv(router)
 class VirtualFolderFile:
-    current_identity: dict = Depends(check_folder_permissions)
 
-    @router.get('/{folder_id}', response_model=models.VirtualFolderFileGETResponse, summary="Get all files in a vfolder", deprecated=True)
+    @router.get('/{folder_id}', response_model=models.VirtualFolderFileGETResponse, summary="Get all files in a vfolder")
     async def get(self, folder_id, page_params: PaginationRequest = Depends(PaginationRequest)):
         api_response = models.VirtualFolderFileGETResponse()
 
@@ -56,30 +54,31 @@ class VirtualFolderFile:
         api_response.num_of_pages = int(int(total) / int(page_params.page_size))
         api_response.result = results
         return api_response.json_response()
-
-
-    @router.put('/{folder_id}', response_model=models.VirtualFolderFilePUTResponse, summary="Edit folder name")
-    async def put(self, folder_id, data: models.VirtualFolderFilePUT):
-        api_response = models.VirtualFolderFilePUTResponse()
-        folder_name = data.name
-        if not folder_name:
-            api_response.error_msg = "Missing required fields"
-            api_response.code = EAPIResponseCode.bad_request
-            return api_response.json_response()
-
-        # update vfolder in neo4j
-        url = ConfigClass.NEO4J_SERVICE + f"nodes/VirtualFolder/node/{folder_id}"
-        payload = {
-            "name": folder_name,
-        }
-        result = requests.put(url, json=payload)
-        if result.status_code != 200:
-            api_response.error_msg = "update vfolder in neo4j Error: " + result.json()
-            api_response.code = EAPIResponseCode.internal_error
-            return api_response.json_response()
-        vfolder = result.json()[0]
-        api_response.result = vfolder
-        return api_response.json_response()
+    ############################
+    # duplicate api
+    ############################
+    # @router.put('/{folder_id}', response_model=models.VirtualFolderFilePUTResponse, summary="Edit folder name")
+    # async def put(self, folder_id, data: models.VirtualFolderFilePUT):
+    #     api_response = models.VirtualFolderFilePUTResponse()
+    #     folder_name = data.name
+    #     if not folder_name:
+    #         api_response.error_msg = "Missing required fields"
+    #         api_response.code = EAPIResponseCode.bad_request
+    #         return api_response.json_response()
+    #
+    #     # update vfolder in neo4j
+    #     url = ConfigClass.NEO4J_SERVICE + f"nodes/VirtualFolder/node/{folder_id}"
+    #     payload = {
+    #         "name": folder_name,
+    #     }
+    #     result = requests.put(url, json=payload)
+    #     if result.status_code != 200:
+    #         api_response.error_msg = "update vfolder in neo4j Error: " + result.json()
+    #         api_response.code = EAPIResponseCode.internal_error
+    #         return api_response.json_response()
+    #     vfolder = result.json()[0]
+    #     api_response.result = vfolder
+    #     return api_response.json_response()
 
     @router.delete('/{folder_id}', response_model=models.VirtualFolderFileDELETEResponse, summary="Delete a vfolder")
     async def delete(self, folder_id):
@@ -96,7 +95,6 @@ class VirtualFolderFile:
 
 @cbv(router)
 class FileBulk:
-    current_identity: dict = Depends(jwt_required)
 
     @router.post('/{folder_geid}/files', response_model=models.VirtualFileBulkPOSTResponse, summary="Add files to vfolder")
     def post(self, folder_geid, data: models.VirtualFileBulkPOST):
@@ -117,7 +115,7 @@ class FileBulk:
 
         # Get folders dataset
         container_id = vfolder["container_id"]
-        url = ConfigClass.NEO4J_SERVICE + f"nodes/Dataset/node/{container_id}"
+        url = ConfigClass.NEO4J_SERVICE + f"nodes/Container/node/{container_id}"
         result = requests.get(url)
         if result.status_code != 200:
             api_response.code = EAPIResponseCode.internal_error

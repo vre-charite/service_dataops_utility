@@ -1,16 +1,13 @@
-import os
-from config import ConfigClass
 from resources.error_handler import catch_internal
-from resources.helpers import get_resource_bygeid, get_files_recursive
+from resources.helpers import get_resource_bygeid, get_files_recursive, location_decoder
 from fastapi import APIRouter, Depends
 from fastapi_utils.cbv import cbv
 from models.base_models import EAPIResponseCode, APIResponse
 from models import file_ops_models as models
-from resources.cataloguing_manager import CataLoguingManager
 from commons.logger_services.logger_factory_service import SrvLoggerFactory
 from commons.data_providers.redis import SrvRedisSingleton
-from .validations import validate_operation, validate_project, validate_destination_repeated
-from .copy_dispatcher import get_copy_destination_path
+from .validations import validate_operation, validate_project
+from .validation_copy import copy_validation
 
 router = APIRouter()
 
@@ -24,12 +21,21 @@ class FileOperationsValidate:
     @router.post('/',  summary="File operations api, validate file operation job")
     @catch_internal('api_file_operations_validate')
     async def post(self, data: models.FileOperationsValidatePOST):
+        '''
+        flatten targets => find unique_path(ingestion path)
+        => find destination_path(copy only) => validate operation => validate repeated => return results
+        '''
         api_response = APIResponse()
-
         srv_redis = SrvRedisSingleton()
-
         files_validation = []
-
+        to_validate_files = []
+        to_validate = []
+        '''
+        {
+            'geid': optional,
+            'full_path': ingestion_path
+        }
+        '''
         try:
             # validate project
             project_validation_code, validation_result = validate_project(
@@ -37,12 +43,10 @@ class FileOperationsValidate:
             if project_validation_code != EAPIResponseCode.success:
                 return project_validation_code, validation_result
             project_info = validation_result
-
-            # find full_path in neo4j db
-            targets_files = data.payload['targets']
+            targets = data.payload['targets']
             dest = data.payload.get('destination', None)
             # init validation
-            for target in targets_files:
+            for target in targets:
                 if target.get("geid"):
                     source = get_resource_bygeid(target["geid"])
                     target['resource_type'] = get_resource_type(
@@ -56,98 +60,69 @@ class FileOperationsValidate:
                     target['zone'] = get_zone(source['labels'])
                     source['zone'] = target['zone']
                     target['name'] = source['name']
-                    target['full_path'] = get_full_path(source, project_info['code'])
-
-            # copy validation
-            if data.operation == 'copy':
-                api_response.code = EAPIResponseCode.success
-                api_response.result = copy_validation(project_info['code'], targets_files, dest, data.operation, srv_redis)
-                return api_response
-
-            # get child files
-            child_file_nodes = []
-            for target in targets_files:
-                if target['resource_type'] == 'Folder':
+                    if source['resource_type'] == 'File':
+                        source['rename'] = target.get('rename')
+                        to_validate_files.append(source)
+                else:
+                    to_validate.append({"full_path": target['full_path']})
+            # flatten folders
+            for target in targets:
+                if target.get('resource_type') == 'Folder':
                     child_files = get_files_recursive(target['geid'], [])
                     for source in child_files:
-                        child_file_nodes.append({
-                            'name': source['name'],
-                            'geid': source['global_entity_id'],
-                            'full_path': source['full_path'],
-                            'zone': get_zone(source['labels']),
-                            'resource_type': 'File'
-                        })
-            targets_files += child_file_nodes
-            # target_file include folders and files
+                        source['resource_type'] = 'File'
+                        source['zone'] = get_zone(source['labels'])
+                        source['target_folder_geid'] = target['geid']
+                        source['source_folder_rename'] = target['rename'] if target.get('rename') else target['name']
+                        to_validate_files.append(source)
+            # generate validate objects
+            to_validate += [{
+                    'geid': node.get('target_folder_geid') if 'target_folder_geid'
+                        in node else node.get('global_entity_id'),
+                    'full_path': get_ingestion_path(node),
+                    'entity_geid': node.get('global_entity_id'),
+                    'location': node.get('location'),
+                    'source_folder': node.get('target_folder_geid'),
+                    'source_folder_rename': node.get('source_folder_rename'),
+                    'copy_name': node['rename'] if node.get('rename') else node['name']
+                }
+                for node in to_validate_files]
+            # # copy validation temporary disabled
+            # if data.operation == 'copy':
+            #     api_response.code = EAPIResponseCode.success
+            #     api_response.result = await copy_validation(project_info['code'],
+            #         to_validate, dest, data.operation, srv_redis)
+            #     return api_response
             # validate operation lock
-            for target in targets_files:
+            for target in to_validate:
                 current_file_action = srv_redis.file_get_status(
                     target['full_path'])
-
                 is_valid = validate_operation(
                     data.operation, current_file_action)
                 validation = {
                     "is_valid": is_valid,
-                    "geid": target['geid'],
+                    "geid": target.get('geid', None),
                     "full_path": target['full_path'],
                     "current_file_action": current_file_action
                 }
                 files_validation.append(validation)
                 if not is_valid:
                     validation['error'] = 'operation-block'
-
+                files_validation.sort(key=lambda v: v['is_valid'])
             api_response.result = files_validation
-
         except Exception as e:
             self._logger.info('Error in getting current action: ' + str(e))
             api_response.code = EAPIResponseCode.internal_error
             api_response.result = 'Error in getting current action: ' + str(e)
             return api_response
-
         return api_response
-
-
-def copy_validation(project_code, targets, destination_geid, operation, srv_redis):
-    validations = []
-    # validate operation lock
-    for target in targets:
-        current_file_action = srv_redis.file_get_status(
-            target['full_path'])
-
-        is_valid = validate_operation(
-            operation, current_file_action)
-        validation = {
-            "is_valid": is_valid,
-            "geid": target['geid'],
-            "full_path": target['full_path'],
-            "current_file_action": current_file_action
-        }
-        validations.append(validation)
-        if not is_valid:
-            validation['error'] = 'operation-block'
-    # check copy destination
-    for target in targets:
-        copied_name = target.get("rename", target['name'])
-        destination_path = get_copy_destination_path(
-            project_code, copied_name, destination_geid)
-        is_valid, found = validate_destination_repeated(
-            "VRECore", project_code, target['resource_type'], destination_path)
-        validation = [
-            validation for validation in validations if validation['geid'] == target['geid']][0]
-        validation['destination_path'] = destination_path
-        if not is_valid:
-            validation['error'] = 'entity-exist'
-            validation['is_valid'] = is_valid
-            validation['found'] = found['global_entity_id']
-            validation['found_name'] = found['name'] 
-    return validations
 
 
 def get_resource_type(labels: list):
     '''
     Get resource type by neo4j labels
     '''
-    resources = ['File', 'TrashFile', 'Folder', 'Dataset']
+    resources = ['File', 'TrashFile', 'Folder', 'Container']
     for label in labels:
         if label in resources:
             return label
@@ -165,17 +140,8 @@ def get_zone(labels: list):
     return None
 
 
-def get_full_path(resource, project_code):
-    try:
-        if resource['resource_type'] == 'File':
-            return resource['full_path']
-        if resource['resource_type'] == 'Folder':
-            return {
-                'Greenroom': os.path.join(ConfigClass.NFS_ROOT_PATH, project_code, 'raw',
-                                          resource['folder_relative_path'], resource['name']),
-                'VRECore': os.path.join(ConfigClass.VRE_ROOT_PATH, project_code,
-                                        resource['folder_relative_path'], resource['name']),
-            }.get(resource['zone'])
-    except Exception as e:
-        raise Exception('Invalid entity: ' +
-                        str(resource) + '-------' + str(e))
+def get_ingestion_path(source: dict):
+    location = source['location']
+    ingestion_type, ingestion_host, ingestion_path = location_decoder(
+        location)
+    return ingestion_path

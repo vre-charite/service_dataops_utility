@@ -25,6 +25,7 @@ class VirtualFolderGETResponse(APIResponse):
 class VirtualFolderPOST(BaseModel):
     name: str 
     project_geid: str 
+    username: str
 
 
 class VirtualFolderPOSTResponse(APIResponse):
@@ -41,6 +42,7 @@ class VirtualFolderPOSTResponse(APIResponse):
 ### VirtulFolderFilePUT ###
 class VirtualFolderPUT(BaseModel):
     collections: list 
+    username: str
 
 
 class VirtualFolderPUTResponse(APIResponse):

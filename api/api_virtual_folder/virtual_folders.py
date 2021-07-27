@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from config import ConfigClass
 from models.base_models import APIResponse, PaginationRequest, EAPIResponseCode
 from models import virtual_folder_models as models
-from auth import jwt_required 
 from resources.dependency import check_folder_permissions
 from resources.helpers import fetch_geid
 import copy
@@ -16,13 +15,9 @@ router = APIRouter()
 
 @cbv(router)
 class VirtualFolder:
-    current_identity: dict = Depends(jwt_required)
-
     @router.get('/', response_model=models.VirtualFolderGETResponse, summary="Get the collection belonging to user")
-    async def get(self, project_geid: str):
+    async def get(self, project_geid: str, username: str):
         api_response = APIResponse() 
-        username = self.current_identity["username"]
-
         container_id = self.get_container_id(project_geid)
         if container_id is None:
             api_response.code = EAPIResponseCode.not_found
@@ -71,48 +66,36 @@ class VirtualFolder:
         api_response = models.VirtualFolderPOSTResponse()
         folder_name = data.name
         project_geid = data.project_geid
-        username = self.current_identity.get("username")
-        user_id = self.current_identity.get("user_id")
-        role = self.current_identity.get("role")
+        username = data.username
         #add internal func
         container_id = self.get_container_id(project_geid)
         if container_id is None:
             api_response.code = EAPIResponseCode.not_found
             api_response.error_msg = "Project not found"
             return api_response.json_response()
-        
-        if not username or user_id == None:
-            api_response.code = EAPIResponseCode.bad_request
-            api_response.error_msg = "Couldn't get user info from jwt token"
-            return api_response.json_response()
 
-        if role != "admin":
-            # Check user belongs to dataset
-            url = ConfigClass.NEO4J_SERVICE + 'relations/query'
+        try:
             payload = {
-                "start_label": "User",
-                "end_label": "Dataset",
-                "start_params": {
-                    "id": int(user_id)
-                },
-                "end_params": {
-                    "id": int(container_id),
-                },
+                "username": username
             }
-            result = requests.post(url, json=payload)
-            result = result.json()
-            if len(result) < 1:
-                api_response.error_msg = "User doesn't belong to project"
-                api_response.code = EAPIResponseCode.forbidden
+            response = requests.post(ConfigClass.NEO4J_SERVICE + "nodes/User/query", json=payload)
+            if not response.json():
+                api_response.code = EAPIResponseCode.not_found
+                api_response.error_msg = "User not found"
                 return api_response.json_response()
-
+            user_node = response.json()[0]
+        except Exception as e:
+            api_response.code = EAPIResponseCode.internal_error
+            api_response.error_msg = f"Neo4j error: {str(e)}"
+            return api_response.json_response()
+        
         # Folder count check
         url = ConfigClass.NEO4J_SERVICE + 'relations/query'
         payload = {
             "start_label": "User",
             "end_label": "VirtualFolder",
             "start_params": {
-                "id": int(user_id)
+                "username": username
             },
             "end_params": {
                 "container_id": int(container_id),
@@ -131,7 +114,7 @@ class VirtualFolder:
             "start_label": "User",
             "end_label": "VirtualFolder",
             "start_params": {
-                "id": int(user_id)
+                "username": username
             },
             "end_params": {
                 "container_id": int(container_id),
@@ -164,7 +147,7 @@ class VirtualFolder:
         # Add relation to user
         url = ConfigClass.NEO4J_SERVICE + "relations/owner"
         payload = {
-            "start_id": user_id,
+            "start_id": user_node["id"],
             "end_id": vfolder["id"],
         }
         result = requests.post(url, json=payload)
@@ -178,6 +161,7 @@ class VirtualFolder:
     @router.put('/', response_model=models.VirtualFolderPUTResponse, summary="Bulk update virtual folders")
     async def put(self, data: models.VirtualFolderPUT):
         api_response = models.VirtualFolderPOSTResponse()
+        username = data.username
         results = []
         update_name = set()
         for collection in data.collections:
@@ -197,12 +181,11 @@ class VirtualFolder:
         for vfolder in data.collections:
             # Check folder belongs to user
             url = ConfigClass.NEO4J_SERVICE + f"relations/query"
-            user_id = self.current_identity["user_id"]
             payload = {
                 "start_label": "User",
                 "end_label": "VirtualFolder",
                 "start_params": {
-                    "id": int(user_id),
+                    "username": username,
                 },
                 "end_params": {
                     "global_entity_id": vfolder["geid"],
@@ -239,7 +222,7 @@ class VirtualFolder:
                 "start_label": "User",
                 "end_label": "VirtualFolder",
                 "start_params": {
-                    "id": int(user_id)
+                    "username": username
                 },
                 "end_params": {
                     "container_id": container_id,
@@ -270,7 +253,7 @@ class VirtualFolder:
         return api_response.json_response()
     
     def get_container_id(self, project_geid):
-        url = ConfigClass.NEO4J_SERVICE + f"nodes/Dataset/query"
+        url = ConfigClass.NEO4J_SERVICE + f"nodes/Container/query"
         payload = {
             "global_entity_id": project_geid
         }

@@ -1,7 +1,9 @@
 import os
+# os.environ['env'] = "test"
+
 
 class ConfigClass(object):
-    env = os.environ.get('env', 'test')
+    env = os.environ.get('env', "test")
 
     VRE_ROOT_PATH = "/vre-data"
     NEO4J_SERVICE = "http://neo4j.utility:5062/v1/neo4j/"
@@ -12,10 +14,16 @@ class ConfigClass(object):
     DATA_OPS_GR = "http://dataops-gr.greenroom:5063"
     UTILITY_SERVICE = "http://common.utility:5062"
     SEND_MESSAGE_URL = "http://queue-producer.greenroom:6060/v1/send_message"
+    PROVENANCE_SERVICE = "http://provenance.utility:5077/v1/"
+    DATA_UPLOAD_SERVICE_GREENROOM = "http://upload.greenroom:5079/v1"
+
+    MINIO_SERVICE = "http://minio.minio:9000"
+    if env == "test":
+        MINIO_SERVICE = "http://10.3.7.220"
+
 
     # disk mounts
     NFS_ROOT_PATH = "/data/vre-storage"
-    VRE_ROOT_PATH = "/vre-data"
 
     # Job status related
     # Redis Service
@@ -35,3 +43,11 @@ class ConfigClass(object):
         AUTH_SERVICE = "http://10.3.7.217:5061/v1/"
         QUEUE_SERVICE = "http://10.3.7.214:6060/v1/"
         SEND_MESSAGE_URL = "http://10.3.7.214:6060/v1/send_message"
+        PROVENANCE_SERVICE = "http://10.3.7.202:5077/v1/"
+        DATA_UPLOAD_SERVICE_GREENROOM = "http://10.3.7.201:5079/v1"
+
+# disk mounts
+    ROOT_PATH = {
+        "vre": "/vre-data",
+        "greenroom": "/data/vre-storage"
+    }.get(os.environ.get('namespace'), "./test_project")

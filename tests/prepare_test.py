@@ -69,7 +69,7 @@ class SetUpTest:
     def create_project(self, code, discoverable='true'):
         self.log.info("\n")
         self.log.info("Preparing testing project".ljust(80, '-'))
-        testing_api = ConfigClass.NEO4J_SERVICE + "nodes/Dataset"
+        testing_api = ConfigClass.NEO4J_SERVICE + "nodes/Container"
         params = {"name": "DataopsUTUnitTest",
                   "path": code,
                   "code": code,
@@ -124,4 +124,35 @@ class SetUpTest:
         node_id = result["id"]
         return node_id
 
+    def create_folder(self, project_code):
+        payload = {
+              "folder_name": "test_folder1_21",
+              "zone": "vrecore",
+              "project_code": project_code,
+              "uploader": "admin",
+              "tags": []
+            }
+        response = requests.post(ConfigClass.DATA_UPLOAD_SERVICE_GREENROOM+"/folder", json=payload)
+        if response.status_code != 200 or response.json() == []:
+            self.log.info("ERROR WHILE CREATING FOLDER")
+            return None
+        return response.json()
 
+    def get_project_details(self, project_code):
+        try:
+            url = ConfigClass.NEO4J_SERVICE + "/nodes/Container/query"
+            response = requests.post(url, json={"code":project_code})
+            if response.status_code == 200:
+                response = response.json()
+                return response
+        except Exception as error:
+            self.log.info(f"ERROR WHILE GETTING PROJECT: {error}")
+            raise error
+
+
+
+if __name__ == '__main__':
+    log="log"
+    
+    st = SetUpTest(log=log)
+    st.create_folder("unittest")

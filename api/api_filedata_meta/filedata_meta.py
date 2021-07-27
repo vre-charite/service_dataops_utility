@@ -63,6 +63,11 @@ class FiledataMeta:
             "parent_folder_geid": data.parent_folder_geid,
             "operator": data.operator,
             "process_pipeline": data.process_pipeline,
+            # minio attribute
+            "location" : "minio://%s/%s/%s"%\
+                (ConfigClass.MINIO_SERVICE, data.bucket, data.minio_object_path),
+            "display_path":data.minio_object_path,
+            "version_id": data.version_id
         }
         parent_query = data.parent_query
         self._logger.info(
@@ -75,7 +80,7 @@ class FiledataMeta:
             "code": data.project_code,
         }
         response = requests.post(
-            ConfigClass.NEO4J_SERVICE + "nodes/Dataset/query", json=dataset_data)
+            ConfigClass.NEO4J_SERVICE + "nodes/Container/query", json=dataset_data)
         if response.status_code != 200:
             api_response.error_msg = "Get dataset id:" + str(response.json())
             api_response.code = EAPIResponseCode.internal_error

@@ -64,3 +64,11 @@ class EActionState(Enum):
     RUNNING = 6
     ZIPPING = 7
     READY_FOR_DOWNLOADING = 8
+
+class MessageHubPOST(BaseModel):
+    message: str
+    channel: str
+
+class MessageHubPOSTResponse(APIResponse):
+    result: dict = Field({}, example="succeed"
+    )

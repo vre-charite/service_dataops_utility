@@ -19,6 +19,10 @@ class FiledataMetaPOST(BaseModel):
     parent_query: dict = {}
     parent_folder_geid: str = ""
     original_geid: str = None
+    # Minio attribute
+    bucket: str = ""
+    minio_object_path: str = "" 
+    version_id: str = ""
 
 
 class FiledataMetaPOSTResponse(APIResponse):

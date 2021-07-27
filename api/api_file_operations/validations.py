@@ -11,7 +11,7 @@ def validate_project(project_geid):
     '''
     # validate project
     project_res = http_query_node(
-        "Dataset", {"global_entity_id": project_geid})
+        "Container", {"global_entity_id": project_geid})
     if project_res.status_code != 200:
         return EAPIResponseCode.internal_error, "Query node error: " + str(project_res.text)
     project_found = project_res.json()
@@ -43,23 +43,11 @@ def validate_operation(target_action, current_action):
     return False
 
 
-def validate_destination_repeated(zone, project_code, resource_type, full_path):
+def validate_file_repeated(zone, project_code, location):
     '''
     False invalid, True valid
     '''
     # validate destination
-    query = {}
-    root_path = {
-        'Greenroom': ConfigClass.NFS_ROOT_PATH,
-        'VRECore': ConfigClass.VRE_ROOT_PATH
-    }.get(zone)
-    if resource_type == "Folder":
-        query['folder_relative_path'] = os.path.dirname(
-            full_path).replace(root_path, '').replace(project_code, '', 1).replace('/{}/'.format(project_code), '').strip("/")
-        query['name'] = os.path.basename(full_path)
-        query['project_code'] = project_code
-    if resource_type == "File":
-        query['full_path'] = full_path
     payload = {
         "page": 0,
         "page_size": 1,
@@ -67,8 +55,8 @@ def validate_destination_repeated(zone, project_code, resource_type, full_path):
         "order_by": "global_entity_id",
         "order_type": "desc",
         "query": {
-            **query,
-            "labels": [zone, resource_type]
+            "location": location,
+            "labels": [zone, 'File']
         }
     }
     url = ConfigClass.NEO4J_SERVICE_V2 + "nodes/query"
@@ -77,27 +65,31 @@ def validate_destination_repeated(zone, project_code, resource_type, full_path):
         result = response.json()['result']
         if len(result) > 0:
             return False, result[0]
-    # check old raw files
-    if resource_type == "File":
-        relative_path = full_path.replace(root_path, '').replace(
-            '/{}/'.format(project_code), '')
-        query['full_path'] = os.path.join(
-            root_path, project_code, 'raw', relative_path)
-        payload = {
-            "page": 0,
-            "page_size": 1,
-            "partial": False,
-            "order_by": "global_entity_id",
-            "order_type": "desc",
-            "query": {
-                **query,
-                "labels": [zone, resource_type]
-            }
+    return True, None
+
+
+def validate_folder_repeated(zone, project_code, folder_relative_path, name):
+    '''
+    False invalid, True valid
+    '''
+    # validate destination
+    payload = {
+        "page": 0,
+        "page_size": 1,
+        "partial": False,
+        "order_by": "global_entity_id",
+        "order_type": "desc",
+        "query": {
+            "project_code": project_code,
+            "folder_relative_path": folder_relative_path,
+            "name": name,
+            "labels": [zone, 'Folder']
         }
-        url = ConfigClass.NEO4J_SERVICE_V2 + "nodes/query"
-        response = requests.post(url, json=payload)
-        if response.status_code == 200:
-            result = response.json()['result']
-            if len(result) > 0:
-                return False, result[0]
+    }
+    url = ConfigClass.NEO4J_SERVICE_V2 + "nodes/query"
+    response = requests.post(url, json=payload)
+    if response.status_code == 200:
+        result = response.json()['result']
+        if len(result) > 0:
+            return False, result[0]
     return True, None
