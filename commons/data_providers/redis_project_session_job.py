@@ -8,15 +8,18 @@ class SessionJob:
     Session Job ORM
     '''
 
-    def __init__(self, session_id, project_code, action, operator, job_id=None, task_id="default_task"):
+    def __init__(self, session_id, code, action, operator, job_id=None, \
+        label="Container", task_id="default_task"):
         '''
         Init function, if provide job_id, will read from redis.
-        If not provide, create a new job, and need to call set_job_id first
+        If not provide, create a new job, and need to call set_job_id first,
+        label can be Dataset or Container(Project)
         '''
         self.session_id = session_id
+        self.label = label
         self.task_id = task_id
         self.job_id = job_id
-        self.project_code = project_code
+        self.code = code
         self.action = action
         self.operator = operator
         self.source = None
@@ -31,7 +34,8 @@ class SessionJob:
             "session_id": self.session_id,
             "task_id": self.task_id,
             "job_id": self.job_id,
-            "project_code": self.project_code,
+            "label": self.label,
+            "code": self.code,
             "action": self.action,
             "operator": self.operator,
             "source": self.source,
@@ -83,12 +87,13 @@ class SessionJob:
             raise(Exception('[SessionJob] status not provided'))
         return session_job_set_status(
             self.session_id,
+            self.label,
             self.task_id,
             self.job_id,
             self.source,
             self.action,
             self.status,
-            self.project_code,
+            self.code,
             self.operator,
             self.payload,
             self.progress
@@ -100,8 +105,9 @@ class SessionJob:
         '''
         fetched = session_job_get_status(
             self.session_id,
+            self.label,
             self.job_id,
-            self.project_code,
+            self.code,
             self.action,
             self.operator
         )
@@ -116,7 +122,7 @@ class SessionJob:
         self.task_id = job_read['task_id']
         self.action = job_read['action']
         self.operator = job_read['operator']
-        self.project_code = job_read['project_code']
+        self.code = job_read['code']
 
     def check_job_id(self):
         '''
@@ -124,8 +130,9 @@ class SessionJob:
         '''
         fetched = session_job_get_status(
             self.session_id,
+            self.label,
             self.job_id,
-            self.project_code,
+            self.code,
             self.action,
             self.operator
         )
@@ -134,22 +141,23 @@ class SessionJob:
                 '[SessionJob] job id already exists: {}'.format(self.job_id))
 
 
-def session_job_set_status(session_id, task_id, job_id, source, action, target_status,
-                           project_code, operator, payload=None, progress=0):
+def session_job_set_status(session_id, label, task_id, job_id, source, action, target_status,
+                           code, operator, payload=None, progress=0):
     '''
     set session job status
     '''
     srv_redis = SrvRedisSingleton()
-    my_key = "dataaction:{}:{}:{}:{}:{}:{}".format(
-        session_id, job_id, action, project_code, operator, source)
+    my_key = "dataaction:{}:{}:{}:{}:{}:{}:{}".format(
+        session_id, label, job_id, action, code, operator, source)
     record = {
         "session_id": session_id,
+        "label": label,
         "task_id": task_id,
         "job_id": job_id,
         "source": source,
         "action": action,
         "status": target_status,
-        "project_code": project_code,
+        "code": code,
         "operator": operator,
         "progress": progress,
         "payload": payload,
@@ -160,17 +168,17 @@ def session_job_set_status(session_id, task_id, job_id, source, action, target_s
     return record
 
 
-def session_job_get_status(session_id, job_id="*", project_code="*", action="*", operator="*"):
+def session_job_get_status(session_id, label="Container", job_id="*", code="*", action="*", operator="*"):
     srv_redis = SrvRedisSingleton()
-    my_key = "dataaction:{}:{}:{}:{}:{}".format(
-        session_id, job_id, action, project_code, operator)
+    my_key = "dataaction:{}:{}:{}:{}:{}:{}".format(
+        session_id, label, job_id, action, code, operator)
     res_binary = srv_redis.mget_by_prefix(my_key)
     return [json.loads(record.decode('utf-8')) for record in res_binary] if res_binary else []
 
 
-def session_job_delete_status(session_id, job_id="*", project_code="*", action="*", operator="*"):
+def session_job_delete_status(session_id, label="Container", job_id="*", code="*", action="*", operator="*"):
     srv_redis = SrvRedisSingleton()
-    my_key = "dataaction:{}:{}:{}:{}:{}".format(
-        session_id, job_id, action, project_code, operator)
+    my_key = "dataaction:{}:{}:{}:{}:{}:{}".format(
+        session_id, label, job_id, action, code, operator)
     res_binary_list = srv_redis.mdele_by_prefix(my_key)
     return res_binary_list

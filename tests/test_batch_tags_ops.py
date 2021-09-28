@@ -7,12 +7,31 @@ import os
 from config import ConfigClass
 
 
-class TestAPITags(unittest.TestCase):
-    log = Logger(name='test_api_tags.log')
+default_project_code = "dataops_utility_system_tag"
+default_folder_name = "test_tag_folder"
+
+def setUpModule():
+    _log = Logger(name='test_api_sys_tags.log')
+    _test = SetUpTest(_log)
+    project_details = _test.get_project_details(default_project_code)
+    if len(project_details) > 0:
+        project_id = _test.get_project_details(default_project_code)[0].get('id')
+        _log.info(f'Existing project_id: {project_id}')
+        _test.delete_node("Container", project_id)
+    folder_details = _test.get_folder_details('dataops_utility_system_tag_folder')
+    if len(folder_details) > 0:
+        folder_id = folder_details[0]['id']
+        if folder_id:
+            _test.delete_folder_node(folder_id)
+@unittest.skip('need update')
+class TestAPISYSTags(unittest.TestCase):
+    container = None
+    folder = None
+    log = Logger(name='test_api_sys_tags.log')
     test = SetUpTest(log)
-    project_code = "jiang0526"
+    project_code = "dataops_utility_system_tag"
     container_id = ''
-    folder_name = ''
+    folder_id = ''
 
     @classmethod
     def setUpClass(cls):
@@ -20,27 +39,26 @@ class TestAPITags(unittest.TestCase):
         cls.app = cls.test.app
 
         try:
-            cls.container = cls.test.get_project_details(cls.project_code)
-            cls.container_geid = cls.container[0]["global_entity_id"]
-            cls.container_id = cls.container[0]["id"]
+            # cls.container = cls.test.get_project_details(cls.project_code)
+            cls.container = cls.test.create_project(cls.project_code, name="DataopsUTUnitTestTags")
+            cls.container_geid = cls.container["global_entity_id"]
+            cls.container_id = cls.container["id"]
             cls.folder = cls.test.create_folder(cls.project_code)
             cls.folder_name = cls.folder.get("result")["name"]
+            cls.folder_id = cls.folder.get("result")['id']
             print(cls.folder.get("result")["global_entity_id"])
             if cls.folder is not None:
                 cls.folder_geid = cls.folder.get("result")["global_entity_id"]
         except Exception as e:
             cls.log.error(f"Failed set up test due to error: {e}")
-            raise unittest.SkipTest(f"Failed setup test {e}")
+            raise Exception(f"Failed setup test {e}")
 
     @classmethod
     def tearDownClass(cls):
         cls.log.info("\n")
         cls.log.info("START TEAR DOWN PROCESS")
-        raw_folder_path = os.path.join(
-            ConfigClass.ROOT_PATH, cls.project_code, "raw")
-        path = os.path.join(raw_folder_path, cls.folder_name)
-        # shutil.rmtree(path)
-        # os.remove(cls.folder_path)
+        cls.test.delete_node("Container", cls.container_id)
+        cls.test.delete_folder_node(cls.folder_id)
 
     def test_01_attach_tags_folder(self):
         self.log.info("Attach tags to given folder")

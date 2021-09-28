@@ -56,7 +56,8 @@ def validate_file_repeated(zone, project_code, location):
         "order_type": "desc",
         "query": {
             "location": location,
-            "labels": [zone, 'File']
+            "labels": [zone, 'File'],
+            "archived": False,
         }
     }
     url = ConfigClass.NEO4J_SERVICE_V2 + "nodes/query"
@@ -83,7 +84,8 @@ def validate_folder_repeated(zone, project_code, folder_relative_path, name):
             "project_code": project_code,
             "folder_relative_path": folder_relative_path,
             "name": name,
-            "labels": [zone, 'Folder']
+            "labels": [zone, 'Folder'],
+            "archived": False,
         }
     }
     url = ConfigClass.NEO4J_SERVICE_V2 + "nodes/query"

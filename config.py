@@ -1,53 +1,59 @@
 import os
+import requests
+from requests.models import HTTPError
 # os.environ['env'] = "test"
+
+srv_namespace = "service_dataops_utility"
+CONFIG_CENTER = "http://10.3.7.222:5062" \
+    if os.environ.get('env', "test") == "test" \
+    else "http://common.utility:5062"
+
+
+def vault_factory() -> dict:
+    url = CONFIG_CENTER + \
+        "/v1/utility/config/{}".format(srv_namespace)
+    config_center_respon = requests.get(url)
+    if config_center_respon.status_code != 200:
+        raise HTTPError(config_center_respon.text)
+    return config_center_respon.json()['result']
 
 
 class ConfigClass(object):
-    env = os.environ.get('env', "test")
-
+    vault = vault_factory()
+    env = os.environ.get('env')
+    disk_namespace = os.environ.get('namespace')
+    version = "0.1.0"
     VRE_ROOT_PATH = "/vre-data"
-    NEO4J_SERVICE = "http://neo4j.utility:5062/v1/neo4j/"
-    NEO4J_SERVICE_V2  = "http://neo4j.utility:5062/v2/neo4j/"
-    ENTITYINFO_SERVICE = "http://entityinfo.utility:5066/v1/"
-    CATALOGUING_SERVICE_V2 = "http://cataloguing.utility:5064/v2/"
-    QUEUE_SERVICE = "http://queue-producer.greenroom:6060/v1/"
-    DATA_OPS_GR = "http://dataops-gr.greenroom:5063"
-    UTILITY_SERVICE = "http://common.utility:5062"
-    SEND_MESSAGE_URL = "http://queue-producer.greenroom:6060/v1/send_message"
-    PROVENANCE_SERVICE = "http://provenance.utility:5077/v1/"
-    DATA_UPLOAD_SERVICE_GREENROOM = "http://upload.greenroom:5079/v1"
-
-    MINIO_SERVICE = "http://minio.minio:9000"
-    if env == "test":
-        MINIO_SERVICE = "http://10.3.7.220"
-
-
-    # disk mounts
-    NFS_ROOT_PATH = "/data/vre-storage"
-
-    # Job status related
+    AUTH_SERVICE = vault['AUTH_SERVICE']+'/v1/'
+    NEO4J_SERVICE = vault['NEO4J_SERVICE']+"/v1/neo4j/"
+    NEO4J_SERVICE_V2 = vault['NEO4J_SERVICE']+"/v2/neo4j/"
+    ENTITYINFO_SERVICE = vault['ENTITYINFO_SERVICE']+"/v1/"
+    CATALOGUING_SERVICE_V2 = vault['CATALOGUING_SERVICE']+"/v2/"
+    QUEUE_SERVICE = vault['QUEUE_SERVICE']+"/v1/"
+    # DATA_OPS_GR = vault['DATA_OPS_GR']
+    UTILITY_SERVICE = vault['UTILITY_SERVICE']
+    SEND_MESSAGE_URL = vault['SEND_MESSAGE_URL']+"/v1/send_message"
+    PROVENANCE_SERVICE = vault['PROVENANCE_SERVICE']+"/v1/"
+    MINIO_SERVICE = "http://" + vault['MINIO_ENDPOINT']
+    DATA_UPLOAD_SERVICE_GREENROOM = vault['DATA_UPLOAD_SERVICE_GREENROOM']+"/v1"
     # Redis Service
-    REDIS_HOST = "redis-master.utility"
-    REDIS_PORT = 6379
-    REDIS_DB = 0
-    REDIS_PASSWORD = {
-        'staging': '8EH6QmEYJN',
-        'charite': 'o2x7vGQx6m'
-    }.get(env, "5wCCMMC1Lk")
-
-    if env == "test":
-        REDIS_HOST = "10.3.7.233"
-        NEO4J_SERVICE = "http://10.3.7.216:5062/v1/neo4j/"
-        NEO4J_SERVICE_V2 = "http://10.3.7.216:5062/v2/neo4j/"
-        UTILITY_SERVICE = "http://10.3.7.222:5062"
-        AUTH_SERVICE = "http://10.3.7.217:5061/v1/"
-        QUEUE_SERVICE = "http://10.3.7.214:6060/v1/"
-        SEND_MESSAGE_URL = "http://10.3.7.214:6060/v1/send_message"
-        PROVENANCE_SERVICE = "http://10.3.7.202:5077/v1/"
-        DATA_UPLOAD_SERVICE_GREENROOM = "http://10.3.7.201:5079/v1"
-
-# disk mounts
+    REDIS_HOST = vault['REDIS_HOST']
+    REDIS_PORT = int(vault['REDIS_PORT'])
+    REDIS_DB = int(vault['REDIS_DB'])
+    REDIS_PASSWORD = vault['REDIS_PASSWORD']
+    # disk mounts
     ROOT_PATH = {
         "vre": "/vre-data",
         "greenroom": "/data/vre-storage"
     }.get(os.environ.get('namespace'), "./test_project")
+    NFS_ROOT_PATH = "/data/vre-storage"
+
+    RDS_HOST = vault['RDS_HOST']
+    RDS_PORT = vault['RDS_PORT']
+    RDS_DBNAME = vault['RDS_DBNAME']
+    RDS_USER = vault['RDS_USER']
+    RDS_PWD = vault['RDS_PWD']
+    RDS_SCHEMA_DEFAULT = vault['RDS_SCHEMA_DEFAULT']
+    SQLALCHEMY_DATABASE_URI = f"postgresql://{RDS_USER}:{RDS_PWD}@{RDS_HOST}/{RDS_DBNAME}"
+
+

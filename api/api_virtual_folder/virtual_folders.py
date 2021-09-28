@@ -49,13 +49,12 @@ class VirtualFolder:
             node = relation["end_node"]
             folders.append({
                 "global_entity_id": node["global_entity_id"],
-                "identity": node["id"],
                 "labels": node["labels"],
                 "properties": {
                     "name": node["name"],
                     "time_created": node["time_created"],
                     "time_lastmodified": node["time_lastmodified"],
-                    "container_id": node["container_id"],
+                    "project_geid": node["global_entity_id"],
                 }
             })
         api_response.result = folders
@@ -156,6 +155,8 @@ class VirtualFolder:
             api_response.code = EAPIResponseCode.internal_error
             return api_response.json_response()
         del vfolder["id"]
+        del vfolder["container_id"]
+        vfolder["project_geid"] = project_geid
         return api_response.json_response()
 
     @router.put('/', response_model=models.VirtualFolderPUTResponse, summary="Bulk update virtual folders")
@@ -247,7 +248,19 @@ class VirtualFolder:
                 api_response.code = EAPIResponseCode.internal_error
                 return api_response.json_response()
             vfolder = result.json()[0]
+
+            # get container
+            url = ConfigClass.NEO4J_SERVICE + f"nodes/Container/node/{container_id}"
+            result = requests.get(url)
+            if result.status_code != 200:
+                api_response.error_msg = "Neo4j Error: " + result.json()
+                api_response.code = EAPIResponseCode.internal_error
+                return api_response.json_response()
+            project_geid = result.json()[0]["global_entity_id"]
+
             del vfolder["id"]
+            del vfolder["container_id"]
+            vfolder["project_geid"] = project_geid
             results.append(vfolder)
         api_response.result = results
         return api_response.json_response()

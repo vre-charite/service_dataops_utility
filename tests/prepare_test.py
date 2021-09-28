@@ -66,11 +66,11 @@ class SetUpTest:
         if response.status_code != 200:
             raise Exception(f"Error removing user from project: {response.json()}")
 
-    def create_project(self, code, discoverable='true'):
+    def create_project(self, code, discoverable='true', name="DataopsUTUnitTest"):
         self.log.info("\n")
         self.log.info("Preparing testing project".ljust(80, '-'))
         testing_api = ConfigClass.NEO4J_SERVICE + "nodes/Container"
-        params = {"name": "DataopsUTUnitTest",
+        params = {"name": name,
                   "path": code,
                   "code": code,
                   "description": "Project created by unit test, will be deleted soon...",
@@ -126,7 +126,7 @@ class SetUpTest:
 
     def create_folder(self, project_code):
         payload = {
-              "folder_name": "test_folder1_21",
+              "folder_name": "test_tag_folder",
               "zone": "vrecore",
               "project_code": project_code,
               "uploader": "admin",
@@ -149,6 +149,29 @@ class SetUpTest:
             self.log.info(f"ERROR WHILE GETTING PROJECT: {error}")
             raise error
 
+    def get_folder_details(self, folder_name):
+        try:
+            url = ConfigClass.NEO4J_SERVICE + "/nodes/Folder/query"
+            response = requests.post(url, json={"name":folder_name})
+            if response.status_code == 200:
+                response = response.json()
+                return response
+        except Exception as error:
+            self.log.info(f"ERROR WHILE GETTING PROJECT: {error}")
+            raise error
+
+    def delete_folder_node(self, node_id):
+        self.log.info("\n")
+        self.log.info("Preparing delete folder node".ljust(80, '-'))
+        delete_api = ConfigClass.NEO4J_SERVICE + "nodes/Folder/node/%s" % str(node_id)
+        try:
+            delete_res = requests.delete(delete_api)
+            self.log.info(f"DELETE STATUS: {delete_res.status_code}")
+            self.log.info(f"DELETE RESPONSE: {delete_res.text}")
+        except Exception as e:
+            self.log.info(f"ERROR DELETING FILE: {e}")
+            self.log.info(f"PLEASE DELETE THE FILE MANUALLY WITH ID: {node_id}")
+            raise e
 
 
 if __name__ == '__main__':

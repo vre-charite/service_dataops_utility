@@ -28,9 +28,10 @@ class TaskDispatcher:
         api_response = APIResponse()
         session_job = SessionJob(
             data.session_id,
-            data.project_code,
+            data.code,
             data.action,
             data.operator,
+            label=data.label,
             task_id=data.task_id
         )
         session_job.set_job_id(data.job_id)
@@ -46,17 +47,25 @@ class TaskDispatcher:
 
     @router.get('/', summary="Asynchronized Task Management API, Get task information")
     @catch_internal('api_task_dispatch')
-    async def get(self, session_id, job_id="*", project_code="*", action="*", operator="*"):
+    async def get(self, session_id, label="Container", job_id="*", code="*", action="*", operator="*"):
         api_response = APIResponse()
         fetched = session_job_get_status(
             session_id,
+            label,
             job_id,
-            project_code,
+            code,
             action,
             operator
         )
+
+        # here sort the list by timestamp in descending order
+        def get_update_time(x):
+            return x.get("update_timestamp", 0)
+        fetched.sort(key=get_update_time, reverse=True)
+
         api_response.code = EAPIResponseCode.success
         api_response.result = fetched
+
         return api_response.json_response()
 
     @router.delete('/', summary="Asynchronized Task Management API, Delete tasks")
@@ -65,8 +74,9 @@ class TaskDispatcher:
         api_response = APIResponse()
         fetched = session_job_delete_status(
             data.session_id,
+            data.label,
             data.job_id,
-            data.project_code,
+            data.code,
             data.action,
             data.operator
         )
@@ -83,6 +93,7 @@ class TaskDispatcher:
             '*',
             '*',
             '*',
+            label=data.label,
             job_id=data.job_id
         )
         for k, v in data.add_payload.items():

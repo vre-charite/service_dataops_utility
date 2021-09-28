@@ -13,11 +13,12 @@ import copy
 
 router = APIRouter()
 
+
 @cbv(router)
 class VirtualFolderFile:
 
-    @router.get('/{folder_id}', response_model=models.VirtualFolderFileGETResponse, summary="Get all files in a vfolder")
-    async def get(self, folder_id, page_params: PaginationRequest = Depends(PaginationRequest)):
+    @router.get('/{collection_geid}', response_model=models.VirtualFolderFileGETResponse, summary="Get all files in a vfolder", deprecated=True)
+    async def get(self, collection_geid, page_params: PaginationRequest = Depends(PaginationRequest)):
         api_response = models.VirtualFolderFileGETResponse()
 
         # Get file by folder relation
@@ -26,7 +27,7 @@ class VirtualFolderFile:
             "start_label": "VirtualFolder",
             "end_label": "File",
             "start_params": {
-                "id": int(folder_id),
+                "global_entity_id": collection_geid,
             },
             "end_params": {
                 "archived": False,
@@ -54,6 +55,7 @@ class VirtualFolderFile:
         api_response.num_of_pages = int(int(total) / int(page_params.page_size))
         api_response.result = results
         return api_response.json_response()
+
     ############################
     # duplicate api
     ############################
@@ -80,10 +82,23 @@ class VirtualFolderFile:
     #     api_response.result = vfolder
     #     return api_response.json_response()
 
-    @router.delete('/{folder_id}', response_model=models.VirtualFolderFileDELETEResponse, summary="Delete a vfolder")
-    async def delete(self, folder_id):
+    @router.delete('/{collection_geid}', response_model=models.VirtualFolderFileDELETEResponse, summary="Delete a vfolder")
+    async def delete(self, collection_geid):
         api_response = models.VirtualFolderFileDELETEResponse()
-        url = ConfigClass.NEO4J_SERVICE + f"nodes/VirtualFolder/node/{folder_id}"
+
+        url = ConfigClass.NEO4J_SERVICE + f"nodes/VirtualFolder/query"
+        payload = {
+            "global_entity_id": collection_geid
+        }
+        result = requests.post(url, json=payload)
+        if result.status_code != 200:
+            api_response.error_msg = "update vfolder in neo4j Error: " + str(result.json())
+            api_response.code = EAPIResponseCode.internal_error
+            return api_response.json_response()
+        vfolder_node = result.json()[0]
+        vfolder_id = vfolder_node["id"]
+
+        url = ConfigClass.NEO4J_SERVICE + f"nodes/VirtualFolder/node/{vfolder_id}"
         result = requests.delete(url)
         if result.status_code != 200:
             api_response.code = EAPIResponseCode.internal_error
@@ -95,16 +110,15 @@ class VirtualFolderFile:
 
 @cbv(router)
 class FileBulk:
-
-    @router.post('/{folder_geid}/files', response_model=models.VirtualFileBulkPOSTResponse, summary="Add files to vfolder")
-    def post(self, folder_geid, data: models.VirtualFileBulkPOST):
+    @router.post('/{collection_geid}/files', response_model=models.VirtualFileBulkPOSTResponse, summary="Add files to vfolder")
+    def post(self, collection_geid, data: models.VirtualFileBulkPOST):
         api_response = models.VirtualFileBulkPOSTResponse()
-        geids = data.geids
+        file_geids = data.file_geids
 
         # Get vfolder
         url = ConfigClass.NEO4J_SERVICE + f"nodes/VirtualFolder/query"
         payload = {
-            "global_entity_id": folder_geid,
+            "global_entity_id": collection_geid,
         }
         response = requests.post(url, json=payload)
         if response.status_code != 200:
@@ -129,7 +143,7 @@ class FileBulk:
         dataset = result.json()[0]
 
         duplicate = False
-        for geid in geids:
+        for geid in file_geids:
             #Duplicate check
             url = ConfigClass.NEO4J_SERVICE_V2 + f"relations/query"
             payload = {
@@ -204,16 +218,16 @@ class FileBulk:
             api_response.result = "success"
         return api_response.json_response()
 
-    @router.delete('/{folder_geid}/files', response_model=models.VirtualFileBulkDELETEResponse, summary="Remove file from folder")
-    def delete(self, folder_geid, data: models.VirtualFileBulkDELETE):
+    @router.delete('/{collection_geid}/files', response_model=models.VirtualFileBulkDELETEResponse, summary="Remove file from folder")
+    def delete(self, collection_geid, data: models.VirtualFileBulkDELETE):
         api_response = models.VirtualFileBulkDELETEResponse()
-        geids = data.geids
+        file_geids = data.file_geids
 
-        for geid in geids:
+        for geid in file_geids:
             # Get vfolder
             url = ConfigClass.NEO4J_SERVICE + f"nodes/VirtualFolder/query"
             payload = {
-                "global_entity_id": folder_geid,
+                "global_entity_id": collection_geid,
             }
             response = requests.post(url, json=payload)
             if response.status_code != 200:
@@ -233,7 +247,7 @@ class FileBulk:
                 "end_labels": ["File", "Folder"],
                 "query": {
                     "start_params": {
-                        "global_entity_id": folder_geid,
+                        "global_entity_id": collection_geid,
                     },
                     "end_params": {
                         "File": {

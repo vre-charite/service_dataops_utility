@@ -45,6 +45,9 @@ class SrvRedisSingleton():
     def delete_by_key(self, key: str):
         return self.__instance.delete(key)
 
+    def unlink_by_key(self, key: str):
+        return self.__instance.unlink(key)
+
     def mdele_by_prefix(self, prefix: str):
         # _logger.debug(prefix)
         query = '{}:*'.format(prefix)

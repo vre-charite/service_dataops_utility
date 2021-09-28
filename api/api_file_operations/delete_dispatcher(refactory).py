@@ -70,6 +70,11 @@ def delete_dispatcher(_logger, data: models.FileOperationsPOST, auth_token):
     # flatten sources
     for source in sources:
         if source["resource_type"] == "Folder":
+            # if folder, send message immediately
+            zone = [label for label in source["labels"]
+                    if label in ["Greenroom", "VRECore"]][0]
+            payload_zone = get_payload_zone(zone)
+            frontend_zone = get_frontend_zone(payload_zone)
             output_folder_name = source['name'] + "_" + str(round(time.time()))
             # update folder name and relative path of the original fnodes
             update_json = {
@@ -87,26 +92,31 @@ def delete_dispatcher(_logger, data: models.FileOperationsPOST, auth_token):
                 source['global_entity_id'], "output")
             nodes_child_files = [
                 node for node in nodes_child if "File" in node["labels"]]
-            # add other attributes
-            for node in nodes_child_files:
-                node['source_folder'] = source
-                node['child_index'] = nodes_child_files.index(node)
-                input_nodes = get_connected_nodes(
-                    node["global_entity_id"], "input")
-                input_nodes = [
-                    node for node in input_nodes if 'Folder' in node['labels']]
-                input_nodes.sort(key=lambda f: f['folder_level'])
-                found_source_node = [
-                    node for node in input_nodes if node['global_entity_id'] == source['global_entity_id']][0]
-                path_relative_to_source_path = ''
-                source_index = input_nodes.index(found_source_node)
-                folder_name_list = [node['name']
-                                    for node in input_nodes[source_index + 1:]]
-                path_relative_to_source_path = os.sep.join(folder_name_list)
-                node['path_relative_to_source_path'] = path_relative_to_source_path
-                node['ouput_relative_path'] = os.path.join(
-                    output_folder_name, path_relative_to_source_path)
-            flattened_sources += nodes_child_files
+            # init job
+            job_geid = fetch_geid()
+            session_job = SessionJob(
+                data.session_id, project_info["code"], "data_delete_folder",
+                data.operator, task_id=data.task_id)
+            session_job.set_job_id(job_geid)
+            session_job.set_progress(0)
+            session_job.set_source(source['display_path'])
+            session_job.set_status(models.EActionState.RUNNING.name)
+            session_job.add_payload("geid", source['global_entity_id'])
+            session_job.add_payload("zone", payload_zone)
+            session_job.add_payload("frontend_zone", frontend_zone)
+            session_job.add_payload("display_path", source.get('display_path'))
+            send_folder_message(
+                _logger,
+                data.session_id,
+                job_geid,
+                source['global_entity_id'],
+                project_info['code'],
+                source['uploader'],
+                data.operator,
+                payload_zone,
+                auth_token
+            )
+            session_job.save()
         elif source["resource_type"] == "File":
             # Get new name
             source_name, source_extension = os.path.splitext(source['name'])
@@ -128,6 +138,7 @@ def delete_dispatcher(_logger, data: models.FileOperationsPOST, auth_token):
             source, None, ouput_relative_path=ouput_relative_path)
         source['input_path'] = input_path
         source['output_path'] = output_path
+        # will unlock when k8s job done, in pipelinewatch
         lock_succeed = try_lock(ingestion_path)
         if not lock_succeed:
             return EAPIResponseCode.bad_request, [
@@ -203,6 +214,34 @@ def delete_dispatcher(_logger, data: models.FileOperationsPOST, auth_token):
 
     return EAPIResponseCode.accepted, [job.to_dict() for job in jobs]
 
+def send_folder_message(_logger, session_id, job_id, input_geid, project_code,
+                        uploader, operator, payload_zone, auth_token):
+    message_payload = {
+        "event_type": "folder_delete",
+        "payload": {
+            "session_id": session_id,
+            "job_id": job_id,
+            "operator": operator,
+            "input_path": input_geid,
+            "input_geid": input_geid,
+            "output_path": "",
+            "trash_path": "",
+            "generic": True,
+            "uploader": uploader,
+            "namespace": payload_zone,
+            "project": project_code,
+            "auth_token": auth_token,
+        },
+        "create_timestamp": time.time()
+    }
+    url = ConfigClass.SEND_MESSAGE_URL
+    _logger.info("Sending Message To Queue: " + str(message_payload))
+    res = requests.post(
+        url=url,
+        json=message_payload,
+        headers={"Content-type": "application/json; charset=utf-8"}
+    )
+    return res.status_code == 200, res.text
 
 def get_payload_zone(zone: str):
     return {

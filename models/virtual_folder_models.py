@@ -85,7 +85,7 @@ class VirtualFileBulkPOSTResponse(APIResponse):
 
 
 class VirtualFileBulkPOST(BaseModel):
-    geids: list 
+    file_geids: list 
 
 
 ### VirtualFileBulkDELETE ###
@@ -93,7 +93,7 @@ class VirtualFileBulkDELETEResponse(APIResponse):
     result: str = Field('', example='success')
 
 class VirtualFileBulkDELETE(BaseModel):
-    geids: list 
+    file_geids: list 
 
 
 ### VirtualFolderFileGET

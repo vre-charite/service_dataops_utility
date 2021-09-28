@@ -79,16 +79,17 @@ def copy_dispatcher(_logger, data: models.FileOperationsPOST, auth_token):
 
     sources = validation_result
 
-    jobs = []
     flattened_sources = [
         node for node in sources if node['resource_type'] == "File"]
-    # if folder
+    # flatten sources
     for source in sources:
         # append path and attrs
         if source["resource_type"] == "Folder":
-            source_bk = "gr-" + project_info["code"]
-            source_path =  os.path.join(
-                source_bk, source['folder_relative_path'], source['name'])
+            nodes_child = get_connected_nodes(
+                source['global_entity_id'], "output")
+            nodes_child_files = [
+                node for node in nodes_child if "File" in node["labels"]]
+
             # check folder repeated
             target_folder_relative_path = ""
             if node_destination and node_destination['resource_type'] == 'Folder':
@@ -106,34 +107,26 @@ def copy_dispatcher(_logger, data: models.FileOperationsPOST, auth_token):
                     'found': found['global_entity_id'],
                     'found_name': repeated_path
                 })
-            else:
-                try:
-                # init job
-                    job_geid = fetch_geid()
-                    neo4j_zone = get_zone(source['labels'])
-                    session_job = SessionJob(
-                        data.session_id, project_info["code"], "data_transfer_folder",
-                        data.operator, task_id=data.task_id)
-                    session_job.set_job_id(job_geid)
-                    session_job.set_progress(0)
-                    session_job.set_source(source_path)
-                    session_job.set_status(models.EActionState.RUNNING.name)
-                    session_job.add_payload("geid", source['global_entity_id'])
-                    transfer_folder_message(
-                        _logger,
-                        data.session_id, job_geid, source['global_entity_id'],
-                        project_info['code'],
-                        source['uploader'], data.operator,
-                        destination_geid, auth_token,
-                        source.get("rename", source["name"])
-                    )
-                    session_job.save()
-                    jobs.append(session_job)
-                except Exception as e:
-                    exception_mesaage = str(e)
-                    session_job.set_status(models.EActionState.TERMINATED.name)
-                    session_job.add_payload("error", exception_mesaage)
-                    session_job.save()
+
+            # add other attributes
+            for node in nodes_child_files:
+                node['parent_folder'] = source
+                input_nodes = get_connected_nodes(
+                    node["global_entity_id"], "input")
+                input_nodes = [
+                    node for node in input_nodes if 'Folder' in node['labels']]
+                input_nodes.sort(key=lambda f: f['folder_level'])
+                found_source_node = [
+                    node for node in input_nodes if node['global_entity_id'] == source['global_entity_id']][0]
+                path_relative_to_source_path = ''
+                source_index = input_nodes.index(found_source_node)
+                folder_name_list = [node['name']
+                                    for node in input_nodes[source_index + 1:]]
+                path_relative_to_source_path = os.sep.join(folder_name_list)
+                node['path_relative_to_source_path'] = path_relative_to_source_path
+                node['ouput_relative_path'] = os.path.join(
+                    output_folder_name, path_relative_to_source_path)
+            flattened_sources += nodes_child_files
 
     # update input output path
     for source in flattened_sources:
@@ -168,6 +161,7 @@ def copy_dispatcher(_logger, data: models.FileOperationsPOST, auth_token):
         return EAPIResponseCode.conflict, repeated
 
     # job dispatch
+    jobs = []
     for source in flattened_sources:
         # check operation lock
         source_bk = "gr-" + project_info["code"] + "/"
@@ -239,33 +233,6 @@ def try_lock(resource_key):
         # currently in other operations
         return False
 
-def transfer_folder_message(_logger, session_id, job_id, input_geid, project_code,
-                        uploader, operator, destination_geid, auth_token, rename):
-    payload = {
-        "event_type": "folder_copy",
-        "payload": {
-            "session_id": session_id,
-            "job_id": job_id,
-            "input_geid": input_geid,
-            "project": project_code,
-            "uploader": uploader,
-            "generic": True,
-            "operator": operator,
-            "destination_geid": destination_geid,
-            "auth_token": auth_token,
-            "process_pipeline": "data_transfer_folder",
-            "rename": rename
-        },
-        "create_timestamp": time.time()
-    }
-    url = ConfigClass.SEND_MESSAGE_URL
-    _logger.info("Sending Message To Queue: " + str(payload))
-    res = requests.post(
-        url=url,
-        json=payload,
-        headers={"Content-type": "application/json; charset=utf-8"}
-    )
-    return res.status_code == 200, res.text
 
 def transfer_file_message(_logger, session_id, job_id, input_geid, input_path, output_path, project_code,
                           generate_id, uploader, operator, operation_type: int, destination_geid, auth_token):

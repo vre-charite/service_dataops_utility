@@ -3,7 +3,8 @@ import time
 import os
 from config import ConfigClass
 from resources.error_handler import catch_internal
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Header, Depends
+from typing import Optional
 from fastapi_utils.cbv import cbv
 from models.base_models import EAPIResponseCode, APIResponse
 from models import file_ops_models as models
@@ -22,7 +23,16 @@ class FileOperations:
 
     @router.post('/', response_model=models.FileOperationsPOSTResponse, summary="File operations api, invoke an async file operation job")
     @catch_internal('api_file_operations')
-    async def post(self, data: models.FileOperationsPOST):
+    async def post(self, data: models.FileOperationsPOST, \
+        Authorization: Optional[str] = Header(None), refresh_token: Optional[str] = Header(None)):
+
+        self._logger.info(str(Authorization))
+        self._logger.info(str(refresh_token))
+        token = {
+            "at": Authorization,
+            "rt": refresh_token
+        }
+
         api_response = APIResponse()
         # permission control, operation lock
         # selete operation worker
@@ -34,7 +44,7 @@ class FileOperations:
             api_response.code = EAPIResponseCode.bad_request
             api_response.error_msg = "Invalid operation"
             return api_response.json_response()
-        code, result = job_dispatcher(self._logger, data)
+        code, result = job_dispatcher(self._logger, data, token)
         api_response.code = code
         if not api_response.code == EAPIResponseCode.accepted:
             api_response.error_msg = "Error occured"
