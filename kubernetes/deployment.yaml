@@ -34,8 +34,8 @@ spec:
           readinessProbe:
             tcpSocket:
               port: 5063
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            initialDelaySeconds: 15
+            periodSeconds: 20
           resources:
             requests:
               memory: "1000Mi"
