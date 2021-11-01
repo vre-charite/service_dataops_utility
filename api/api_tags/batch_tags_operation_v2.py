@@ -187,7 +187,7 @@ def update_tags_nested_entity(geid, tags, operation):
                     if batch_update_child is not None:
                         batch_update_tags += batch_update_child
                     # get proper file/folder form labels list
-                    if "File" in child["labels"] and api_res_entity["operation_status"] == "success":
+                    if api_res_entity["operation_status"] == "success":
                         child_geid = child["global_entity_id"]
                         update_elastic_search_entity(geid=child_geid, taglist=api_res_entity["tags"])
 
