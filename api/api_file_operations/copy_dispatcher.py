@@ -47,6 +47,8 @@ def copy_dispatcher(_logger, data: models.FileOperationsPOST, auth_token):
     node_destination = None
     if destination_geid:
         node_destination = get_resource_bygeid(destination_geid)
+        if not node_destination:
+            raise Exception('Not found resource: ' + destination_geid)
         node_destination['resource_type'] = get_resource_type(
             node_destination['labels'])
         if not node_destination['resource_type'] in ['Folder', 'Container']:
@@ -63,6 +65,8 @@ def copy_dispatcher(_logger, data: models.FileOperationsPOST, auth_token):
             for target in targets:
                 # get source file
                 source = get_resource_bygeid(target['geid'])
+                if not source:
+                    raise Exception('Not found resource: ' + target['geid'])
                 if target.get("rename"):
                     source["rename"] = target.get("rename")
                 source['resource_type'] = get_resource_type(source['labels'])

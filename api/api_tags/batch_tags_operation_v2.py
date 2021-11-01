@@ -46,7 +46,7 @@ class BatchOpsTagsAPI:
             return _res.json_response()
         try:
             for entity_geid in entity_geid_list:
-                entity_details = get_resource_bygeid(entity_geid)
+                entity_details = get_resource_bygeid(entity_geid, exclude_archived=True)
                 entity_type = get_resource_type(entity_details["labels"])
                 if only_files and entity_type == "Folder":
                     only_files_res, batch_update_list  = update_only_files(entity_geid, data_tags, operation)
@@ -57,7 +57,8 @@ class BatchOpsTagsAPI:
                     _logger.info(f"updating current entity :{entity_geid}")
                     current_entity_res, batch_update = update_tag_list_based_on_operation(entity_geid=entity_geid, tags=data_tags,
                                                                             operation=operation)
-                    final_response.append(current_entity_res)
+                    if current_entity_res:
+                        final_response.append(current_entity_res)
                     if batch_update:
                         batch_update_neo4j_list += batch_update
                     if entity_type == "Folder" and inherit is True and not only_files:
@@ -75,8 +76,8 @@ class BatchOpsTagsAPI:
             neo4j_res = http_query_batch_update_neo4j(batch_update_neo4j_list)
             if neo4j_res.status_code != 200:
                 _logger.error("Error while updating tags in neo4j")
-                _res.set_code = EAPIResponseCode.internal_error
-                _res.set_error_msg = f"Error while updating tags in neo4j: {neo4j_res.json()}"
+                _res.code = EAPIResponseCode.internal_error
+                _res.error_msg = f"Error while updating tags in neo4j: {neo4j_res.json()}"
                 return _res.json_response()
             _res.code = EAPIResponseCode.success
 
@@ -106,10 +107,12 @@ def http_query_batch_update_neo4j(batch_update_list):
 def update_tag_list_based_on_operation(operation, entity_geid, tags):
     current_entity_res = {}
     batch_update = []
-    entity_details = get_resource_bygeid(entity_geid)
+    entity_details = get_resource_bygeid(entity_geid, exclude_archived=True)
+    if not entity_details:
+        return None, None
     entity_type = get_resource_type(entity_details["labels"])
     entity_tags = entity_details["tags"]
-    display_path = entity_details["full_path"] if entity_type == "File" else entity_details["folder_relative_path"]
+    display_path = entity_details["display_path"] if entity_type == "File" else entity_details["folder_relative_path"]
     if operation == "add":
         updated_list = tags + entity_tags
         tags_list = list(dict.fromkeys(updated_list))
@@ -179,18 +182,21 @@ def update_tags_nested_entity(geid, tags, operation):
             for child in data:
                 api_res_entity, batch_update_child = update_tag_list_based_on_operation(operation=operation,
                                                                     entity_geid=child["global_entity_id"], tags=tags)
-                api_res.append(api_res_entity)
-                if batch_update_child is not None:
-                    batch_update_tags += batch_update_child
-                # get proper file/folder form labels list
-                if "File" in child["labels"] and api_res_entity["operation_status"] == "success":
-                    child_geid = child["global_entity_id"]
-                    update_elastic_search_entity(geid=child_geid, taglist=api_res_entity["tags"])
+                if api_res_entity:
+                    api_res.append(api_res_entity)
+                    if batch_update_child is not None:
+                        batch_update_tags += batch_update_child
+                    # get proper file/folder form labels list
+                    if "File" in child["labels"] and api_res_entity["operation_status"] == "success":
+                        child_geid = child["global_entity_id"]
+                        update_elastic_search_entity(geid=child_geid, taglist=api_res_entity["tags"])
+
+        _logger.debug(f"update_tags_nested_entity result: {api_res}")
         return api_res, batch_update_tags
     except Exception as error:
         _logger.error(f"Error while updating tags for child entities : {error}")
-        _res.set_code = EAPIResponseCode.internal_error
-        _res.set_error_msg = f"Error while updating tags for child entities : {error}"
+        _res.code = EAPIResponseCode.internal_error
+        _res.error_msg = f"Error while updating tags for child entities : {error}"
         return _res.json_response(), _res.code
 
 
@@ -202,16 +208,18 @@ def update_only_files(entity_geid, data_tags, operation):
     if not len(response.json()["result"]) == 0:
         data = response.json()["result"]
         for child in data:
-
             child_geid = child["global_entity_id"]
-            entity_details = get_resource_bygeid(child_geid)
+            entity_details = get_resource_bygeid(child_geid, exclude_archived=True )
+            if not entity_details:
+                continue
             entity_type = get_resource_type(entity_details["labels"])
             if entity_type == "File":
                 api_res_entity, batch_update = update_tag_list_based_on_operation(entity_geid=child_geid, tags=data_tags,
                                                                     operation=operation)
                 if batch_update is not None:
                     batch_update_list += batch_update
-                api_res.append(api_res_entity)
+                if api_res_entity:
+                    api_res.append(api_res_entity)
                 if api_res_entity["operation_status"] == "success":
                     _logger.info("Entity is File. Updating elastic search entity with tag list")
                     update_elastic_search_entity(geid=child_geid, taglist=api_res_entity["tags"])
@@ -231,7 +239,7 @@ def update_elastic_search_entity(geid, taglist):
     es_res = requests.put(ConfigClass.PROVENANCE_SERVICE + 'entity/file', json=es_payload)
     if es_res.status_code != 200:
         _logger.error(f"Error while attaching tags to file in es update:{es_res.json()}")
-        _res.set_code = EAPIResponseCode.internal_error
-        _res.set_error_msg = f"Elastic Search Error: {es_res.json()}"
+        _res.code = EAPIResponseCode.internal_error
+        _res.error_msg = f"Elastic Search Error: {es_res.json()}"
         return _res.json_response(), _res.code
     _logger.info('Successfully attach tags to file: {}'.format((es_res.json())))

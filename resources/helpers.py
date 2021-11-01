@@ -1,6 +1,7 @@
 from config import ConfigClass
 import requests
 import re
+from typing import Optional
 
 def fetch_geid(id_type=""):
     ## fetch global entity id
@@ -34,7 +35,8 @@ def http_query_node(primary_label, query_params={}):
     response = requests.post(node_query_url, json=payload)
     return response
 
-def get_resource_bygeid(geid):
+# TODO: usage of this function could be improved with better error handling
+def get_resource_bygeid(geid, exclude_archived=False) -> Optional[dict]:
     '''
     if not exist return None
     '''
@@ -72,6 +74,10 @@ def get_resource_bygeid(geid):
             "labels": ['Container']
         }
     }
+    if exclude_archived:
+        payload_project["query"]["archived"] = False
+        payload_folder["query"]["archived"] = False
+        payload_file["query"]["archived"] = False
     response_file = requests.post(url, json=payload_file)
     if response_file.status_code == 200:
         result = response_file.json()['result']
@@ -87,7 +93,7 @@ def get_resource_bygeid(geid):
         result = response_project.json()['result']
         if len(result) > 0:
             return result[0]
-    raise Exception('Not found resource: ' + geid)
+    return None
 
 
 def get_files_recursive(folder_geid, all_files=[]):

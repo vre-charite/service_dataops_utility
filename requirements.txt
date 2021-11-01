@@ -10,4 +10,4 @@ python-multipart==0.0.5
 python-json-logger==0.1.11
 redis==3.5.3
 FastAPI-SQLAlchemy==0.2.1
-psycopg2==2.8.6
+psycopg2-binary==2.8.6

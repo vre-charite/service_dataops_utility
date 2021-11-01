@@ -119,6 +119,8 @@ def update_tags_nested_entity(geid, tags, tag_type):
 def update_tags(entity_geid, tags_list, tag_type):
     final_res = []
     entity_details = get_resource_bygeid(entity_geid)
+    if not entity_details:
+        raise Exception("Not found resource: " + entity_geid)
     entity_type = get_resource_type(entity_details["labels"])
     entity_id = entity_details["id"]
     try:

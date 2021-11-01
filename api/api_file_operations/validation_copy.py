@@ -24,6 +24,8 @@ async def copy_thread(destination_geid, project_code, node,
     destination = None
     if destination_geid:
         destination_folder = get_resource_bygeid(destination_geid)
+        if not destination_folder:
+            raise Exception('Not found resource: ' + destination_geid)
         destination_folder['resource_type'] = get_resource_type(
             destination_folder['labels'])
         if not destination_folder['resource_type'] in ['Folder', 'Container']:
@@ -134,6 +136,8 @@ def repeated_check(_logger, data: models.FileOperationsPOST):
     node_destination = None
     if destination_geid:
         node_destination = get_resource_bygeid(destination_geid)
+        if not node_destination:
+            raise Exception('Not found resource: ' + destination_geid)
         node_destination['resource_type'] = get_resource_type(
             node_destination['labels'])
         if not node_destination['resource_type'] in ['Folder', 'Container']:
@@ -150,6 +154,8 @@ def repeated_check(_logger, data: models.FileOperationsPOST):
             for target in targets:
                 # get source file
                 source = get_resource_bygeid(target['geid'])
+                if not source:
+                    raise Exception('Not found resource: ' + target['geid'])
                 if target.get("rename"):
                     source["rename"] = target.get("rename")
                 source['resource_type'] = get_resource_type(source['labels'])

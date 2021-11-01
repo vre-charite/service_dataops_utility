@@ -2,7 +2,7 @@ import requests
 import os
 from config import ConfigClass
 from models.base_models import EAPIResponseCode, APIResponse
-from resources.helpers import send_message_to_queue, fetch_geid, http_query_node, get_resource_bygeid
+from resources.helpers import send_message_to_queue, fetch_geid, http_query_node
 
 
 def validate_project(project_geid):

@@ -69,6 +69,8 @@ class FileOperationsValidate:
             for target in targets:
                 if target.get("geid"):
                     source = get_resource_bygeid(target["geid"])
+                    if not source:
+                        raise Exception('Not found resource: ' + target['geid'])
                     target['resource_type'] = get_resource_type(
                         source['labels'])
                     source['resource_type'] = target['resource_type']
