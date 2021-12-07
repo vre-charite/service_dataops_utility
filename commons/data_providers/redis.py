@@ -2,6 +2,8 @@ from redis import StrictRedis
 from config import ConfigClass
 from enum import Enum
 import json
+from datetime import timedelta
+
 from commons.logger_services.logger_factory_service import SrvLoggerFactory
 
 _logger = SrvLoggerFactory('SrvRedisSingleton').get_logger()
@@ -30,7 +32,8 @@ class SrvRedisSingleton():
         return self.__instance.get(key)
 
     def set_by_key(self, key: str, content: str):
-        res = self.__instance.set(key, content)
+        res = self.__instance.set(key, content, ex=timedelta(hours=24))
+        return res
         # _logger.debug(key + ":  " + content)
 
     def mget_by_prefix(self, prefix: str):

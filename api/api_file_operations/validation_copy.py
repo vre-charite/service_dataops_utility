@@ -1,11 +1,16 @@
-import os
 import asyncio
-from resources.helpers import get_resource_bygeid, location_decoder, \
-    get_connected_nodes, fetch_geid
-from .validations import validate_operation, validate_file_repeated
+import os
+
+from api.api_file_operations.validations import validate_file_repeated
+from api.api_file_operations.validations import validate_folder_repeated
+from api.api_file_operations.validations import validate_operation
+from api.api_file_operations.validations import validate_project
 from models import file_ops_models as models
-from models.base_models import EAPIResponseCode, APIResponse
-from .validations import validate_project, validate_file_repeated, validate_folder_repeated
+from models.base_models import EAPIResponseCode
+from resources.helpers import get_connected_nodes
+from resources.helpers import get_resource_bygeid
+from resources.helpers import location_decoder
+
 
 async def copy_validation(project_code, to_validate, destination_geid, operation, srv_redis):
     validations = []
@@ -14,6 +19,7 @@ async def copy_validation(project_code, to_validate, destination_geid, operation
         operation, srv_redis, validations) for node in to_validate])
     validations.sort(key=lambda v: v['is_valid'])
     return validations
+
 
 async def copy_thread(destination_geid, project_code, node,
         operation, srv_redis, validations):
@@ -103,6 +109,7 @@ async def copy_thread(destination_geid, project_code, node,
         dest_validation['found'] = found['global_entity_id']
         dest_validation['found_name'] = found['name']
 
+
 def repeated_check(_logger, data: models.FileOperationsPOST):
     '''
     return tuple response_code, worker_result
@@ -115,24 +122,10 @@ def repeated_check(_logger, data: models.FileOperationsPOST):
     project_info = validation_result
     project_code = validation_result.get("code", None)
 
-    # validate payload
-    def validate_payload(payload):
-        if not type(payload) == dict:
-            return False, "payload must be an object"
-        if not "targets" in payload:
-            return False, "targets required"
-        if not type(payload["targets"]) == list:
-            return False, "targets must be a list of objects"
-        for target in payload["targets"]:
-            if "geid" not in target:
-                return False, "target must have a valid geid"
-        return True, "validated"
-    validated, validation_result = validate_payload(data.payload)
-    if not validated:
-        return EAPIResponseCode.bad_request, "Invalid payload: " + validation_result
+    payload = data.payload.dict()
 
     # validate destination
-    destination_geid = data.payload.get('destination', None)
+    destination_geid = payload.get('destination', None)
     node_destination = None
     if destination_geid:
         node_destination = get_resource_bygeid(destination_geid)
@@ -144,7 +137,7 @@ def repeated_check(_logger, data: models.FileOperationsPOST):
             return EAPIResponseCode.bad_request, "Invalid destination type: " + destination_geid
 
     # validate targets
-    targets = data.payload["targets"]
+    targets = payload["targets"]
     to_validate_repeat_geids = []
     repeated = []
 
@@ -255,6 +248,7 @@ def repeated_check(_logger, data: models.FileOperationsPOST):
 
     return EAPIResponseCode.success, []
 
+
 def get_resource_type(labels: list):
     '''
     Get resource type by neo4j labels
@@ -264,6 +258,7 @@ def get_resource_type(labels: list):
         if label in resources:
             return label
     return None
+
 
 def get_output_payload(file_node, destination=None, ouput_relative_path=''):
     '''

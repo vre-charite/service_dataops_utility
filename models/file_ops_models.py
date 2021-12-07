@@ -1,12 +1,38 @@
-from pydantic import BaseModel, validator, Field, root_validator
-from models.base_models import APIResponse
 from enum import Enum
+from typing import List
+from typing import Optional
+from uuid import UUID
+
+from pydantic import BaseModel
+from pydantic import Extra
+from pydantic import Field
+
+from models.base_models import APIResponse
+
+
+class FileOperationTarget(BaseModel):
+    """Validate structure of single target in file operation payload."""
+
+    geid: str
+
+    class Config:
+        extra = Extra.ignore
+
+
+class FileOperationPayload(BaseModel):
+    """Validate structure of payload in file operation post body."""
+
+    request_id: Optional[UUID]
+    targets: List[FileOperationTarget]
+
+    class Config:
+        extra = Extra.allow
 
 
 class FileOperationsPOST(BaseModel):
     session_id: str
     task_id: str = "default_task_id"  # a geid to mark a batch of operations
-    payload: dict = {}
+    payload: FileOperationPayload
     operator: str
     operation: str = "copy/delete"
     project_geid: str
@@ -52,9 +78,8 @@ class FileOperationsValidatePOST(BaseModel):
 
 
 class EActionState(Enum):
-    '''
-    Action state
-    '''
+    """Action state."""
+
     INIT = 0,
     PRE_UPLOADED = 1,
     CHUNK_UPLOADED = 2,
@@ -65,10 +90,11 @@ class EActionState(Enum):
     ZIPPING = 7
     READY_FOR_DOWNLOADING = 8
 
+
 class MessageHubPOST(BaseModel):
     message: str
     channel: str
 
+
 class MessageHubPOSTResponse(APIResponse):
-    result: dict = Field({}, example="succeed"
-    )
+    result: dict = Field({}, example="succeed")

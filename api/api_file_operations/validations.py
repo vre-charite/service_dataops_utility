@@ -1,8 +1,13 @@
+from typing import Any
+from typing import Dict
+from typing import Optional
+from typing import Tuple
+
 import requests
-import os
+
 from config import ConfigClass
-from models.base_models import EAPIResponseCode, APIResponse
-from resources.helpers import send_message_to_queue, fetch_geid, http_query_node
+from models.base_models import EAPIResponseCode
+from resources.helpers import http_query_node
 
 
 def validate_project(project_geid):
@@ -43,11 +48,9 @@ def validate_operation(target_action, current_action):
     return False
 
 
-def validate_file_repeated(zone, project_code, location):
-    '''
-    False invalid, True valid
-    '''
-    # validate destination
+def validate_file_repeated(zone, project_code, location) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """Check if file already exists at this location."""
+
     payload = {
         "page": 0,
         "page_size": 1,
@@ -69,11 +72,9 @@ def validate_file_repeated(zone, project_code, location):
     return True, None
 
 
-def validate_folder_repeated(zone, project_code, folder_relative_path, name):
-    '''
-    False invalid, True valid
-    '''
-    # validate destination
+def validate_folder_repeated(zone, project_code, folder_relative_path, name) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """Check if folder already exists for this relative path."""
+
     payload = {
         "page": 0,
         "page_size": 1,

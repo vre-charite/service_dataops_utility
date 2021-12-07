@@ -1,266 +1,243 @@
+import enum
 import os
 import time
-from config import ConfigClass
+from enum import Enum
+from enum import unique
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Tuple
+from typing import Union
+
 import requests
-import enum
-from resources.helpers import send_message_to_queue, fetch_geid, \
-    http_query_node, get_resource_bygeid, get_connected_nodes, location_decoder
-from models.base_models import EAPIResponseCode, APIResponse
-from models import file_ops_models as models
+
+from api.api_file_operations.dispatcher import BaseDispatcher
+from api.api_file_operations.validations import validate_project
 from commons.data_providers.redis_project_session_job import SessionJob
-from .validations import validate_project, validate_file_repeated, validate_folder_repeated
-from models.resource_lock_mgr import ResourceLockManager
+from config import ConfigClass
+from models import file_ops_models as models
+from models.base_models import EAPIResponseCode
+from resources.helpers import fetch_geid
+from resources.helpers import get_resource_bygeid
+from resources.helpers import location_decoder
 
-# validation => flatten sources(if source is 'Folder', find all child files) => generate input and output path => send messages
+
+@unique
+class ResourceType(str, Enum):
+    FOLDER = 'Folder'
+    FILE = 'File'
+    TRASH_FILE = 'TrashFile'
+    CONTAINER = 'Container'
 
 
-def copy_dispatcher(_logger, data: models.FileOperationsPOST, auth_token):
-    '''
-    return tuple response_code, worker_result
-    '''
-    # validate project
-    project_validation_code, validation_result = validate_project(
-        data.project_geid)
-    if project_validation_code != EAPIResponseCode.success:
-        return project_validation_code, validation_result
-    project_info = validation_result
-    project_code = validation_result.get("code", None)
+class Source(dict):
+    """Store information about one source."""
 
-    # validate payload
-    def validate_payload(payload):
-        if not type(payload) == dict:
-            return False, "payload must be an object"
-        if not "targets" in payload:
-            return False, "targets required"
-        if not type(payload["targets"]) == list:
-            return False, "targets must be a list of objects"
-        for target in payload["targets"]:
-            if "geid" not in target:
-                return False, "target must have a valid geid"
-        return True, "validated"
-    validated, validation_result = validate_payload(data.payload)
-    if not validated:
-        return EAPIResponseCode.bad_request, "Invalid payload: " + validation_result
 
-    # validate destination
-    destination_geid = data.payload.get('destination', None)
-    node_destination = None
-    if destination_geid:
-        node_destination = get_resource_bygeid(destination_geid)
-        if not node_destination:
-            raise Exception('Not found resource: ' + destination_geid)
-        node_destination['resource_type'] = get_resource_type(
-            node_destination['labels'])
-        if not node_destination['resource_type'] in ['Folder', 'Container']:
-            return EAPIResponseCode.bad_request, "Invalid destination type: " + destination_geid
+class SourceList(list):
+    """Store list of Sources."""
 
-    # validate targets
-    targets = data.payload["targets"]
-    to_validate_repeat_geids = []
-    repeated = []
+    def __init__(self, sources: List[Dict[str, Any]]) -> None:
+        super().__init__([Source(source) for source in sources])
 
-    def validate_targets(targets: list):
-        fetched = []
-        try:
-            for target in targets:
-                # get source file
-                source = get_resource_bygeid(target['geid'])
-                if not source:
-                    raise Exception('Not found resource: ' + target['geid'])
-                if target.get("rename"):
-                    source["rename"] = target.get("rename")
-                source['resource_type'] = get_resource_type(source['labels'])
-                if not source['resource_type'] in ['File', 'Folder']:
-                    raise Exception('Invalid target type(only support File or Folder): ' + str(source))
-                fetched.append(source)
-                to_validate_repeat_geids.append(source['global_entity_id'])
-            return True, fetched
-        except Exception as err:
-            return False, str("validate target failed: " + str(err))
-    validated, validation_result = validate_targets(targets)
-    if not validated:
-        return EAPIResponseCode.bad_request, validation_result
+    def _get_by_resource_type(self, resource_type: ResourceType) -> List[Source]:
+        return [source for source in self if source['resource_type'] == resource_type]
 
-    sources = validation_result
+    def filter_folders(self) -> List[Source]:
+        """Return sources with folder resource type."""
+        return self._get_by_resource_type(ResourceType.FOLDER)
 
-    jobs = []
-    flattened_sources = [
-        node for node in sources if node['resource_type'] == "File"]
-    # if folder
-    for source in sources:
-        # append path and attrs
-        if source["resource_type"] == "Folder":
+    def filter_files(self) -> List[Source]:
+        """Return sources with file resource type."""
+        return self._get_by_resource_type(ResourceType.FILE)
+
+
+class CopyDispatcher(BaseDispatcher):
+    """Validate targets, create copy file/folder sessions and send messages to the queue."""
+
+    def execute(
+        self, _logger, data: models.FileOperationsPOST, auth_token: Dict[str, str]
+    ) -> Tuple[EAPIResponseCode, Union[str, List[Dict[str, Any]]]]:
+        """Execute copy logic."""
+
+        project_validation_code, validation_result = validate_project(data.project_geid)
+        if project_validation_code != EAPIResponseCode.success:
+            return project_validation_code, validation_result
+        project_info = validation_result
+
+        payload = data.payload.dict()
+
+        # validate destination
+        destination_geid = payload.get('destination', None)
+        if destination_geid:
+            node_destination = get_resource_bygeid(destination_geid)
+            if not node_destination:
+                raise Exception(f'Not found resource: {destination_geid}')
+            node_destination['resource_type'] = get_resource_type(node_destination['labels'])
+            if not node_destination['resource_type'] in [ResourceType.FOLDER, ResourceType.CONTAINER]:
+                return EAPIResponseCode.bad_request, f'Invalid destination type: {destination_geid}'
+        else:
+            return EAPIResponseCode.bad_request, f'Destination is required: {destination_geid}'
+
+        targets = payload['targets']
+
+        def validate_targets(targets: List[Dict[str, Any]]):
+            fetched = []
+            try:
+                for target in targets:
+                    # get source file
+                    source = get_resource_bygeid(target['geid'])
+                    if not source:
+                        raise Exception(f'Not found resource: {target["geid"]}')
+                    if source['archived'] is True:
+                        raise Exception(f'Archived files should not perform further file actions: {target["geid"]}')
+                    source['resource_type'] = get_resource_type(source['labels'])
+                    if not source['resource_type'] in ['File', 'Folder']:
+                        raise Exception(f'Invalid target type (only support File or Folder): {str(source)}')
+                    fetched.append(source)
+                return True, fetched
+            except Exception as err:
+                return False, str("validate target failed: " + str(err))
+
+        validated, validation_result = validate_targets(targets)
+        if not validated:
+            return EAPIResponseCode.bad_request, validation_result
+
+        sources = SourceList(validation_result)
+
+        jobs = []
+
+        sources_folders = sources.filter_folders()
+        for source in sources_folders:
+            # append path and attrs
             source_bk = "gr-" + project_info["code"]
-            source_path =  os.path.join(
-                source_bk, source['folder_relative_path'], source['name'])
-            # check folder repeated
-            target_folder_relative_path = ""
-            if node_destination and node_destination['resource_type'] == 'Folder':
-                target_folder_relative_path = os.path.join(
-                node_destination['folder_relative_path'], node_destination['name'])
-            output_folder_name = source.get('rename', source['name'])
-            is_valid, found = validate_folder_repeated(
-            "VRECore", project_code, target_folder_relative_path, output_folder_name)
-            if not is_valid:
-                repeated_path = os.path.join(target_folder_relative_path, output_folder_name)
-                repeated.append({
-                    'error': 'entity-exist',
-                    'is_valid': is_valid,
-                    "geid": source['global_entity_id'],
-                    'found': found['global_entity_id'],
-                    'found_name': repeated_path
-                })
-            else:
-                try:
-                # init job
-                    job_geid = fetch_geid()
-                    neo4j_zone = get_zone(source['labels'])
-                    session_job = SessionJob(
-                        data.session_id, project_info["code"], "data_transfer_folder",
-                        data.operator, task_id=data.task_id)
-                    session_job.set_job_id(job_geid)
-                    session_job.set_progress(0)
-                    session_job.set_source(source_path)
-                    session_job.set_status(models.EActionState.RUNNING.name)
-                    session_job.add_payload("geid", source['global_entity_id'])
-                    transfer_folder_message(
-                        _logger,
-                        data.session_id, job_geid, source['global_entity_id'],
-                        project_info['code'],
-                        source['uploader'], data.operator,
-                        destination_geid, auth_token,
-                        source.get("rename", source["name"])
-                    )
-                    session_job.save()
-                    jobs.append(session_job)
-                except Exception as e:
-                    exception_mesaage = str(e)
-                    session_job.set_status(models.EActionState.TERMINATED.name)
-                    session_job.add_payload("error", exception_mesaage)
-                    session_job.save()
+            source_path = os.path.join(source_bk, source['folder_relative_path'], source['name'])
 
-    # update input output path
-    for source in flattened_sources:
-        source['resource_type'] = get_resource_type(source['labels'])
-        location = source['location']
-        ingestion_type, ingestion_host, ingestion_path = location_decoder(
-            location)
-        source['ingestion_type'] = ingestion_type
-        source['ingestion_host'] = ingestion_host
-        source['ingestion_path'] = ingestion_path
-        ouput_relative_path = source.get('ouput_relative_path', '')
-        input_path, output_path = get_output_payload(
-            source, node_destination, ouput_relative_path=ouput_relative_path)
-        source['input_path'] = input_path
-        source['output_path'] = output_path
-        # validate repeated
-        if source['global_entity_id'] in to_validate_repeat_geids:
-            host = "{}://{}".format(ingestion_type, ingestion_host)
-            bucket = "core-" + project_info["code"] + "/"
-            dest_location = os.path.join(host, bucket + source['output_path'])
-            is_valid, found = validate_file_repeated(
-                "VRECore", project_code, dest_location)
-            if not is_valid:
-                repeated.append({
-                    'error': 'entity-exist',
-                    'is_valid': is_valid,
-                    "geid": source['global_entity_id'],
-                    'found': found['global_entity_id'],
-                    'found_name': source['output_path']
-                })
-    if len(repeated) > 0:
-        return EAPIResponseCode.conflict, repeated
+            job_geid = fetch_geid()
+            session_job = SessionJob(
+                data.session_id, project_info['code'], 'data_transfer', data.operator, task_id=data.task_id
+            )
 
-    # job dispatch
-    for source in flattened_sources:
-        # check operation lock
-        source_bk = "gr-" + project_info["code"] + "/"
-        dest_bucket = "core-" + project_info["code"] + "/"
-        source_resource_key = os.path.join(source_bk, source['input_path'])
-        dest_resource_key = os.path.join(dest_bucket, source['output_path'])
-        for key in [source_resource_key, dest_resource_key]:
-            lock_succeed = try_lock(key)
-            if not lock_succeed:
-                return EAPIResponseCode.bad_request, [
-                    {
-                        'error': 'operation-block',
-                        'is_valid': False,
-                        "blocked": key
-                    }
-                ]
+            try:
+                session_job.set_job_id(job_geid)
+                session_job.set_progress(0)
+                session_job.set_source(source_path)
+                session_job.set_status(models.EActionState.RUNNING.name)
+                session_job.add_payload('geid', source['global_entity_id'])
+                transfer_folder_message(
+                    _logger,
+                    data.session_id,
+                    job_geid,
+                    source['global_entity_id'],
+                    project_info['code'],
+                    str(data.payload.request_id or ''),
+                    source['uploader'],
+                    data.operator,
+                    destination_geid,
+                    auth_token,
+                    source['name'],
+                )
+                session_job.save()
+                jobs.append(session_job)
+            except Exception as e:
+                exception_message = str(e)
+                session_job.set_status(models.EActionState.TERMINATED.name)
+                session_job.add_payload('error', exception_message)
+                session_job.save()
 
-        # init job
-        job_geid = fetch_geid()
-        neo4j_zone = get_zone(source['labels'])
-        session_job = SessionJob(
-            data.session_id, project_info["code"], "data_transfer",
-            data.operator, task_id=data.task_id)
-        session_job.set_job_id(job_geid)
-        session_job.set_progress(0)
-        session_job.set_source(source['ingestion_path'])
-        session_job.set_status(models.EActionState.INIT.name)
-        session_job.add_payload("geid", source['global_entity_id'])
-        session_job.save()
-        jobs.append(session_job)
+        sources_files = sources.filter_files()
+        for source in sources_files:
+            source['resource_type'] = get_resource_type(source['labels'])
+            ingestion_type, ingestion_host, ingestion_path = location_decoder(source['location'])
+            source['ingestion_type'] = ingestion_type
+            source['ingestion_host'] = ingestion_host
+            source['ingestion_path'] = ingestion_path
+            ouput_relative_path = source.get('ouput_relative_path', '')
+            input_path, output_path = get_output_payload(source, node_destination, ouput_relative_path=ouput_relative_path)
+            source['input_path'] = input_path
+            source['output_path'] = output_path
 
-        try:
-            # send message
-            generate_id = source.get("generate_id", "undefined")
-            succeed_sent = transfer_file_message(_logger,
-                                                 data.session_id, job_geid, source['global_entity_id'],
-                                                 source["input_path"], source["output_path"],
-                                                 project_info['code'], generate_id,
-                                                 source['uploader'], data.operator,
-                                                 1, destination_geid, auth_token)
-            if not succeed_sent[0]:
-                raise(
-                    Exception('transfer message sent failed: ' + succeed_sent[1]))
-            # update job status
-            session_job.add_payload("output_path", source["output_path"])
-            session_job.add_payload("input_path", source["input_path"])
-            session_job.add_payload("destination_dir_geid", str(destination_geid))
-            session_job.add_payload("source_folder", source.get('parent_folder'))
-            session_job.add_payload("display_path", source.get('display_path'))
-            session_job.set_status(models.EActionState.RUNNING.name)
+            job_geid = fetch_geid()
+            session_job = SessionJob(
+                data.session_id, project_info['code'], 'data_transfer', data.operator, task_id=data.task_id
+            )
+            session_job.set_job_id(job_geid)
+            session_job.set_progress(0)
+            session_job.set_source(source['ingestion_path'])
+            session_job.set_status(models.EActionState.INIT.name)
+            session_job.add_payload("geid", source['global_entity_id'])
             session_job.save()
-        except Exception as e:
-            exception_mesaage = str(e)
-            session_job.set_status(models.EActionState.TERMINATED.name)
-            session_job.add_payload("error", exception_mesaage)
-            session_job.save()
+            jobs.append(session_job)
 
-    return EAPIResponseCode.accepted, [job.to_dict() for job in jobs]
+            try:
+                # send message
+                generate_id = source.get("generate_id", "undefined")
+                succeed_sent = transfer_file_message(
+                    _logger,
+                    data.session_id,
+                    job_geid,
+                    source['global_entity_id'],
+                    source['input_path'],
+                    source['output_path'],
+                    project_info['code'],
+                    str(data.payload.request_id or ''),
+                    generate_id,
+                    source['uploader'],
+                    data.operator,
+                    1,
+                    destination_geid,
+                    auth_token,
+                )
+                if not succeed_sent[0]:
+                    raise Exception('transfer message sent failed: ' + succeed_sent[1])
+                # update job status
+                session_job.add_payload("output_path", source["output_path"])
+                session_job.add_payload("input_path", source["input_path"])
+                session_job.add_payload("destination_dir_geid", str(destination_geid))
+                session_job.add_payload("source_folder", source.get('parent_folder'))
+                session_job.add_payload("display_path", source.get('display_path'))
+                session_job.set_status(models.EActionState.RUNNING.name)
+                session_job.save()
+            except Exception as e:
+                exception_message = str(e)
+                session_job.set_status(models.EActionState.TERMINATED.name)
+                session_job.add_payload("error", exception_message)
+                session_job.save()
 
-def try_lock(resource_key):
-    # lock manager
-    rlock_mgr = ResourceLockManager()
-    result = rlock_mgr.check_lock(resource_key, 'default')
-    locked=  True if result else False
-    if not locked:
-        rlock_mgr.lock(resource_key, 'default')
-        return True
-    else:
-        # currently in other operations
-        return False
+        return EAPIResponseCode.accepted, [job.to_dict() for job in jobs]
 
-def transfer_folder_message(_logger, session_id, job_id, input_geid, project_code,
-                        uploader, operator, destination_geid, auth_token, rename):
+
+def transfer_folder_message(
+    _logger,
+    session_id,
+    job_id,
+    input_geid,
+    project_code,
+    request_id: Optional[str],
+    uploader,
+    operator,
+    destination_geid,
+    auth_token,
+    rename,
+) -> Tuple[bool, str]:
     payload = {
-        "event_type": "folder_copy",
-        "payload": {
-            "session_id": session_id,
-            "job_id": job_id,
-            "input_geid": input_geid,
-            "project": project_code,
-            "uploader": uploader,
-            "generic": True,
-            "operator": operator,
-            "destination_geid": destination_geid,
-            "auth_token": auth_token,
-            "process_pipeline": "data_transfer_folder",
-            "rename": rename
+        'event_type': 'folder_copy',
+        'payload': {
+            'session_id': session_id,
+            'job_id': job_id,
+            'input_geid': input_geid,
+            'project': project_code,
+            'request_id': request_id,
+            'uploader': uploader,
+            'generic': True,
+            'operator': operator,
+            'destination_geid': destination_geid,
+            'auth_token': auth_token,
+            'process_pipeline': 'data_transfer_folder',
+            'rename': rename
         },
-        "create_timestamp": time.time()
+        'create_timestamp': time.time()
     }
     url = ConfigClass.SEND_MESSAGE_URL
     _logger.info("Sending Message To Queue: " + str(payload))
@@ -271,28 +248,43 @@ def transfer_folder_message(_logger, session_id, job_id, input_geid, project_cod
     )
     return res.status_code == 200, res.text
 
-def transfer_file_message(_logger, session_id, job_id, input_geid, input_path, output_path, project_code,
-                          generate_id, uploader, operator, operation_type: int, destination_geid, auth_token):
+
+def transfer_file_message(
+    _logger,
+    session_id,
+    job_id,
+    input_geid,
+    input_path,
+    output_path,
+    project_code,
+    request_id: Optional[str],
+    generate_id,
+    uploader,
+    operator,
+    operation_type: int,
+    destination_geid,
+    auth_token,
+) -> Tuple[bool, str]:
     my_generate_id = generate_id if generate_id else 'undefined'
-    file_name = os.path.basename(input_path)
     payload = {
-        "event_type": "file_copy",
-        "payload": {
-            "session_id": session_id,
-            "job_id": job_id,
-            "input_geid": input_geid,
-            "input_path": input_path,
-            "output_path": output_path,
-            "operation_type": operation_type,
-            "project": project_code,
-            "generate_id": my_generate_id,
-            "uploader": uploader,
-            "generic": True,
-            "operator": operator,
-            "destination_geid": destination_geid,
-            "auth_token": auth_token
+        'event_type': 'file_copy',
+        'payload': {
+            'session_id': session_id,
+            'job_id': job_id,
+            'input_geid': input_geid,
+            'input_path': input_path,
+            'output_path': output_path,
+            'operation_type': operation_type,
+            'project': project_code,
+            'request_id': request_id,
+            'generate_id': my_generate_id,
+            'uploader': uploader,
+            'generic': True,
+            'operator': operator,
+            'destination_geid': destination_geid,
+            'auth_token': auth_token
         },
-        "create_timestamp": time.time()
+        'create_timestamp': time.time()
     }
     url = ConfigClass.SEND_MESSAGE_URL
     _logger.info("Sending Message To Queue: " + str(payload))
@@ -309,11 +301,11 @@ class EOperationType(enum.Enum):
     B = 1  # copy to vre core RAW, publish data to vre ConfigClass.VRE_ROOT_PATH + '/' + self.project + '/raw/' + filename
 
 
-def interpret_operation_location(file_name, project, destination):
+def interpret_operation_location(file_name, project, destination) -> str:
     return os.path.join(ConfigClass.VRE_ROOT_PATH, project, destination, file_name)
 
 
-def get_resource_type(labels: list):
+def get_resource_type(labels: list) -> str:
     '''
     Get resource type by neo4j labels
     '''
@@ -324,7 +316,7 @@ def get_resource_type(labels: list):
     return None
 
 
-def get_zone(labels: list):
+def get_zone(labels: list) -> str:
     '''
     Get resource type by neo4j labels
     '''

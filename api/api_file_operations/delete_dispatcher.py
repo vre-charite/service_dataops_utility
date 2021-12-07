@@ -1,225 +1,224 @@
 import os
 import time
-from config import ConfigClass
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Tuple
+from typing import Union
+
 import requests
-import enum
-from resources.helpers import send_message_to_queue, fetch_geid, http_query_node, get_resource_bygeid, \
-    get_connected_nodes, location_decoder, http_update_node
-from models.base_models import EAPIResponseCode, APIResponse
-from models import file_ops_models as models
+
+from api.api_file_operations.dispatcher import BaseDispatcher
+from api.api_file_operations.validations import validate_project
 from commons.data_providers.redis_project_session_job import SessionJob
-from .validations import validate_project
-from resources.helpers import send_message_to_queue
+from config import ConfigClass
+from models import file_ops_models as models
+from models.base_models import EAPIResponseCode
 from models.resource_lock_mgr import ResourceLockManager
+from resources.helpers import fetch_geid
+from resources.helpers import get_resource_bygeid
+from resources.helpers import location_decoder
+from resources.helpers import send_message_to_queue
 
 
-def delete_dispatcher(_logger, data: models.FileOperationsPOST, auth_token):
-    '''
-    return tuple response_code, worker_result
-    '''
-    # validate project
-    project_validation_code, validation_result = validate_project(
-        data.project_geid)
-    if project_validation_code != EAPIResponseCode.success:
-        return project_validation_code, validation_result
-    project_info = validation_result
+class DeleteDispatcher(BaseDispatcher):
+    """Validate payload and targets, create delete file/folder sessions and send messages to the queue."""
 
-    # validate payload
-    def validate_payload(payload):
-        if not type(payload) == dict:
-            return False, "payload must be an object"
-        if not "targets" in payload:
-            return False, "targets required"
-        if not type(payload["targets"]) == list:
-            return False, "targets must be a list of objects"
-        for target in payload["targets"]:
-            if "geid" not in target:
-                return False, "target must have a valid geid"
-        return True, "validated"
-    validated, validation_result = validate_payload(data.payload)
-    if not validated:
-        return EAPIResponseCode.bad_request, "Invalid payload: " + validation_result
+    def execute(
+        self, _logger, data: models.FileOperationsPOST, auth_token: Dict[str, str]
+    ) -> Tuple[EAPIResponseCode, Union[str, List[Dict[str, Any]]]]:
+        """Execute delete logic."""
 
-    # validate targets
-    targets = data.payload["targets"]
+        # validate project
+        project_validation_code, validation_result = validate_project(
+            data.project_geid)
+        if project_validation_code != EAPIResponseCode.success:
+            return project_validation_code, validation_result
+        project_info = validation_result
 
-    def validate_targets(targets: list):
-        fetched = []
-        try:
-            for target in targets:
-                # get source file
-                source = get_resource_bygeid(target['geid'])
-                if not source:
-                    raise Exception('Not found resource: ' + target['geid'])
-                if target.get("rename"):
-                    source["rename"] = target.get("rename")
-                source['resource_type'] = get_resource_type(source['labels'])
-                if not source['resource_type'] in ['File', 'Folder']:
-                    raise Exception('Invalid target: ' + str(source))
-                source['zone'] = get_zone(source['labels'])
-                fetched.append(source)
-            return True, fetched
-        except Exception as err:
-            return False, str("validate target failed: " + str(err))
-    validated, validation_result = validate_targets(targets)
-    if not validated:
-        return EAPIResponseCode.bad_request, validation_result
+        payload = data.payload.dict()
 
-    sources = validation_result
+        targets = payload["targets"]
 
-    flattened_sources = [
-        node for node in sources if node['resource_type'] == "File"]
-    # flatten sources
-    for source in sources:
-        if source["resource_type"] == "Folder":
-            # if folder, send message immediately
-            zone = [label for label in source["labels"]
-                    if label in ["Greenroom", "VRECore"]][0]
-            payload_zone = get_payload_zone(zone)
-            frontend_zone = get_frontend_zone(payload_zone)
-            # output_folder_name = source['name'] + "_" + str(round(time.time()))
-            # # update folder name and relative path of the original fnodes
-            # update_json = {
-            #     'archived': True,
-            #     'name': output_folder_name
-            # }
-            # updated_source_node = http_update_node(
-            #     "Folder", source['id'], update_json=update_json)
-            # if updated_source_node.status_code != 200:
-            #     raise Exception("updated_source_ndoe error: " + updated_source_node.text
-            #                     + "----- payload: " + str(update_json))
-            # res = updated_source_node.json()[0]
-            # refresh_node(source, res)
-            # nodes_child = get_connected_nodes(
-            #     source['global_entity_id'], "output")
-            # nodes_child_files = [
-            #     node for node in nodes_child if "File" in node["labels"]]
+        def validate_targets(targets: list):
+            fetched = []
+            try:
+                for target in targets:
+                    # get source file
+                    source = get_resource_bygeid(target['geid'])
+                    if not source:
+                        raise Exception('Not found resource: ' + target['geid'])
+                    if source['archived'] is True:
+                        raise Exception(f"Archived files should not perform further file actions: {target['geid']}")
+                    if target.get("rename"):
+                        source["rename"] = target.get("rename")
+                    source['resource_type'] = get_resource_type(source['labels'])
+                    if not source['resource_type'] in ['File', 'Folder']:
+                        raise Exception('Invalid target: ' + str(source))
+                    source['zone'] = get_zone(source['labels'])
+                    fetched.append(source)
+                return True, fetched
+            except Exception as err:
+                return False, str("validate target failed: " + str(err))
+        validated, validation_result = validate_targets(targets)
+        if not validated:
+            return EAPIResponseCode.bad_request, validation_result
 
-            # init the folder delete job here, please note the KEYWORD for redis
-            # is same with file delete as `data_delete` to save api calling
+        sources = validation_result
+
+        flattened_sources = [
+            node for node in sources if node['resource_type'] == "File"]
+        # flatten sources
+        for source in sources:
+            if source["resource_type"] == "Folder":
+                # if folder, send message immediately
+                zone = [label for label in source["labels"]
+                        if label in ["Greenroom", "VRECore"]][0]
+                payload_zone = get_payload_zone(zone)
+                frontend_zone = get_frontend_zone(payload_zone)
+                # output_folder_name = source['name'] + "_" + str(round(time.time()))
+                # # update folder name and relative path of the original fnodes
+                # update_json = {
+                #     'archived': True,
+                #     'name': output_folder_name
+                # }
+                # updated_source_node = http_update_node(
+                #     "Folder", source['id'], update_json=update_json)
+                # if updated_source_node.status_code != 200:
+                #     raise Exception("updated_source_ndoe error: " + updated_source_node.text
+                #                     + "----- payload: " + str(update_json))
+                # res = updated_source_node.json()[0]
+                # refresh_node(source, res)
+                # nodes_child = get_connected_nodes(
+                #     source['global_entity_id'], "output")
+                # nodes_child_files = [
+                #     node for node in nodes_child if "File" in node["labels"]]
+
+                # init the folder delete job here, please note the KEYWORD for redis
+                # is same with file delete as `data_delete` to save api calling
+                job_geid = fetch_geid()
+                session_job = SessionJob(
+                    data.session_id, project_info["code"], "data_delete",
+                    data.operator, task_id=data.task_id)
+                session_job.set_job_id(job_geid)
+                session_job.set_progress(0)
+                session_job.set_source(source['display_path'])
+                session_job.set_status(models.EActionState.RUNNING.name)
+                session_job.add_payload("geid", source['global_entity_id'])
+                session_job.add_payload("zone", payload_zone)
+                session_job.add_payload("frontend_zone", frontend_zone)
+                session_job.add_payload("display_path", source.get('display_path'))
+                send_folder_message(
+                    _logger,
+                    data.session_id,
+                    job_geid,
+                    source['global_entity_id'],
+                    project_info['code'],
+                    source['uploader'],
+                    data.operator,
+                    payload_zone,
+                    auth_token
+                )
+                session_job.save()
+            elif source["resource_type"] == "File":
+                # Get new name
+                source_name, source_extension = os.path.splitext(source['name'])
+                new_file_name = source_name + '_' + \
+                    str(round(time.time())) + source_extension
+                source["rename"] = new_file_name
+
+        # update input output path
+        for source in flattened_sources:
+            source['resource_type'] = get_resource_type(source['labels'])
+            location = source['location']
+            ingestion_type, ingestion_host, ingestion_path = location_decoder(
+                location)
+            source['ingestion_type'] = ingestion_type
+            source['ingestion_host'] = ingestion_host
+            source['ingestion_path'] = ingestion_path
+            ouput_relative_path = source.get('ouput_relative_path', '')
+            input_path, output_path = get_output_payload(
+                source, None, ouput_relative_path=ouput_relative_path)
+            source['input_path'] = input_path
+            source['output_path'] = output_path
+            # # will unlock when k8s job done, in pipelinewatch
+            # lock_succeed = try_lock(ingestion_path)
+            # if not lock_succeed:
+            #     return EAPIResponseCode.bad_request, [
+            #         {
+            #             'error': 'operation-block',
+            #             'is_valid': False,
+            #             "blocked": ingestion_path
+            #         }
+            #     ]
+
+        # job dispatch
+        jobs = []
+        for source in flattened_sources:
+            # init job
             job_geid = fetch_geid()
             session_job = SessionJob(
                 data.session_id, project_info["code"], "data_delete",
                 data.operator, task_id=data.task_id)
             session_job.set_job_id(job_geid)
             session_job.set_progress(0)
-            session_job.set_source(source['display_path'])
-            session_job.set_status(models.EActionState.RUNNING.name)
+            session_job.set_source(source['ingestion_path'])
+            session_job.set_status(models.EActionState.INIT.name)
             session_job.add_payload("geid", source['global_entity_id'])
-            session_job.add_payload("zone", payload_zone)
-            session_job.add_payload("frontend_zone", frontend_zone)
-            session_job.add_payload("display_path", source.get('display_path'))
-            send_folder_message(
-                _logger,
-                data.session_id,
-                job_geid,
-                source['global_entity_id'],
-                project_info['code'],
-                source['uploader'],
-                data.operator,
-                payload_zone,
-                auth_token
-            )
             session_job.save()
-        elif source["resource_type"] == "File":
-            # Get new name
-            source_name, source_extension = os.path.splitext(source['name'])
-            new_file_name = source_name + '_' + \
-                str(round(time.time())) + source_extension
-            source["rename"] = new_file_name
+            jobs.append(session_job)
 
-    # update input output path
-    for source in flattened_sources:
-        source['resource_type'] = get_resource_type(source['labels'])
-        location = source['location']
-        ingestion_type, ingestion_host, ingestion_path = location_decoder(
-            location)
-        source['ingestion_type'] = ingestion_type
-        source['ingestion_host'] = ingestion_host
-        source['ingestion_path'] = ingestion_path
-        ouput_relative_path = source.get('ouput_relative_path', '')
-        input_path, output_path = get_output_payload(
-            source, None, ouput_relative_path=ouput_relative_path)
-        source['input_path'] = input_path
-        source['output_path'] = output_path
-        # will unlock when k8s job done, in pipelinewatch
-        lock_succeed = try_lock(ingestion_path)
-        if not lock_succeed:
-            return EAPIResponseCode.bad_request, [
-                {
-                    'error': 'operation-block',
-                    'is_valid': False,
-                    "blocked": ingestion_path
+            try:
+                # check namespace
+                zone = [label for label in source["labels"]
+                        if label in ["Greenroom", "VRECore"]][0]
+                payload_zone = get_payload_zone(zone)
+                frontend_zone = get_frontend_zone(payload_zone)
+                # Send message to the queue
+                message_payload = {
+                    "event_type": "file_delete",
+                    "payload": {
+                        "session_id": data.session_id,
+                        "job_id": job_geid,
+                        "operator": data.operator,
+                        "input_path": source["input_path"],
+                        "input_geid": source['global_entity_id'],
+                        "output_path": source['output_path'],
+                        "trash_path": "",
+                        "generate_id": source.get('generate_id', 'undefined'),
+                        "generic": True,
+                        "uploader": source.get("uploader", ""),
+                        "namespace": payload_zone,
+                        "project": project_info["code"],
+                        "auth_token": auth_token,
+                    },
+                    "create_timestamp": time.time()
                 }
-            ]
+                res = send_message_to_queue(message_payload)
+                _logger.info(res)
+                _logger.info(message_payload)
+                # pop out the credentials in the return
+                message_payload["payload"].pop("auth_token")
 
+                session_job.set_status(models.EActionState.RUNNING.name)
+                session_job.add_payload("zone", payload_zone)
+                session_job.add_payload("frontend_zone", frontend_zone)
+                session_job.add_payload("message_sent", message_payload)
+                session_job.add_payload("source_folder", source.get("source_folder", None))
+                session_job.add_payload("child_index", source.get("child_index", None))
+                session_job.add_payload("display_path", source.get('display_path'))
+                session_job.save()
+            except Exception as e:
+                exception_mesaage = str(e)
+                session_job.set_status(models.EActionState.TERMINATED.name)
+                session_job.add_payload("error", exception_mesaage)
+                session_job.save()
 
-    # job dispatch
-    jobs = []
-    for source in flattened_sources:
-        # init job
-        job_geid = fetch_geid()
-        session_job = SessionJob(
-            data.session_id, project_info["code"], "data_delete",
-            data.operator, task_id=data.task_id)
-        session_job.set_job_id(job_geid)
-        session_job.set_progress(0)
-        session_job.set_source(source['ingestion_path'])
-        session_job.set_status(models.EActionState.INIT.name)
-        session_job.add_payload("geid", source['global_entity_id'])
-        session_job.save()
-        jobs.append(session_job)
+        return EAPIResponseCode.accepted, [job.to_dict() for job in jobs]
 
-        try:
-            # check namespace
-            zone = [label for label in source["labels"]
-                    if label in ["Greenroom", "VRECore"]][0]
-            payload_zone = get_payload_zone(zone)
-            frontend_zone = get_frontend_zone(payload_zone)
-            # Send message to the queue
-            message_payload = {
-                "event_type": "file_delete",
-                "payload": {
-                    "session_id": data.session_id,
-                    "job_id": job_geid,
-                    "operator": data.operator,
-                    "input_path": source["input_path"],
-                    "input_geid": source['global_entity_id'],
-                    "output_path": source['output_path'],
-                    "trash_path": "",
-                    "generate_id": source.get('generate_id', 'undefined'),
-                    "generic": True,
-                    "uploader": source.get("uploader", ""),
-                    "namespace": payload_zone,
-                    "project": project_info["code"],
-                    "auth_token": auth_token,
-                },
-                "create_timestamp": time.time()
-            }
-            res = send_message_to_queue(message_payload)
-            _logger.info(res)
-            _logger.info(message_payload)
-            # pop out the credentials in the return
-            message_payload["payload"].pop("auth_token")
-
-            session_job.set_status(models.EActionState.RUNNING.name)
-            session_job.add_payload("zone", payload_zone)
-            session_job.add_payload("frontend_zone", frontend_zone)
-            session_job.add_payload("message_sent", message_payload)
-            session_job.add_payload("source_folder", source.get("source_folder", None))
-            session_job.add_payload("child_index", source.get("child_index", None))
-            session_job.add_payload("display_path", source.get('display_path'))
-            session_job.save()
-        except Exception as e:
-            exception_mesaage = str(e)
-            session_job.set_status(models.EActionState.TERMINATED.name)
-            session_job.add_payload("error", exception_mesaage)
-            session_job.save()
-
-    return EAPIResponseCode.accepted, [job.to_dict() for job in jobs]
 
 def send_folder_message(_logger, session_id, job_id, input_geid, project_code,
-                        uploader, operator, payload_zone, auth_token):
+                        uploader, operator, payload_zone, auth_token) -> tuple:
     message_payload = {
         "event_type": "folder_delete",
         "payload": {
@@ -247,14 +246,15 @@ def send_folder_message(_logger, session_id, job_id, input_geid, project_code,
     )
     return res.status_code == 200, res.text
 
-def get_payload_zone(zone: str):
+
+def get_payload_zone(zone: str) -> str:
     return {
         "VRECore": "vrecore",
         "Greenroom": "greenroom"
     }.get(zone)
 
 
-def get_frontend_zone(my_payload_zone: str):
+def get_frontend_zone(my_payload_zone: str) -> str:
     '''
     disk namespace to path
     '''
@@ -265,7 +265,7 @@ def get_frontend_zone(my_payload_zone: str):
     }.get(my_payload_zone, None)
 
 
-def get_resource_type(labels: list):
+def get_resource_type(labels: list) -> str:
     '''
     Get resource type by neo4j labels
     '''
@@ -276,7 +276,7 @@ def get_resource_type(labels: list):
     return None
 
 
-def get_zone(labels: list):
+def get_zone(labels: list) -> str:
     '''
     Get resource type by neo4j labels
     '''
@@ -286,7 +286,8 @@ def get_zone(labels: list):
             return label
     return None
 
-def get_output_payload(file_node, destination=None, ouput_relative_path=''):
+
+def get_output_payload(file_node, destination=None, ouput_relative_path='') -> tuple:
     '''
     return inputpath, outputpath
     '''
@@ -308,11 +309,13 @@ def get_output_payload(file_node, destination=None, ouput_relative_path=''):
         output_path = os.path.join(ouput_relative_path, copied_name)
         return location, output_path
 
-def refresh_node(target: dict, new: dict):
+
+def refresh_node(target: dict, new: dict) -> None:
     for k, v in new.items():
         target[k] = v
 
-def try_lock(resource_key):
+# should removed later
+def try_lock(resource_key) -> bool:
     # lock manager
     rlock_mgr = ResourceLockManager()
     result = rlock_mgr.check_lock(resource_key, 'default')

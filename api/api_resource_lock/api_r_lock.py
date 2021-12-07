@@ -21,6 +21,11 @@ class RLock:
         self._logger = SrvLoggerFactory('api_resource_lock').get_logger()
         self.__mgr = ResourceLockManager()
 
+    async def add_one(self):
+        print("wait 1s")
+        time.sleep(1)
+
+        return 1
 
     @router.post('/', response_model=models.RLockResponse,
                  summary="Asynchronized RLock Management API, Create a new RLock")

@@ -35,68 +35,26 @@ def http_query_node(primary_label, query_params={}):
     response = requests.post(node_query_url, json=payload)
     return response
 
-# TODO: usage of this function could be improved with better error handling
+
 def get_resource_bygeid(geid, exclude_archived=False) -> Optional[dict]:
     '''
-    if not exist return None
+        function will call the neo4j api to get the node
+        by geid. raise exception if the geid is not exist
     '''
-    url = ConfigClass.NEO4J_SERVICE_V2 + "nodes/query"
-    payload_file = {
-        "page": 0,
-        "page_size": 1,
-        "partial": False,
-        "order_by": "global_entity_id",
-        "order_type": "desc",
-        "query": {
-            "global_entity_id": geid,
-            "labels": ['File']
-        }
-    }
-    payload_folder = {
-        "page": 0,
-        "page_size": 1,
-        "partial": False,
-        "order_by": "global_entity_id",
-        "order_type": "desc",
-        "query": {
-            "global_entity_id": geid,
-            "labels": ['Folder']
-        }
-    }
-    payload_project = {
-        "page": 0,
-        "page_size": 1,
-        "partial": False,
-        "order_by": "global_entity_id",
-        "order_type": "desc",
-        "query": {
-            "global_entity_id": geid,
-            "labels": ['Container']
-        }
-    }
-    if exclude_archived:
-        payload_project["query"]["archived"] = False
-        payload_folder["query"]["archived"] = False
-        payload_file["query"]["archived"] = False
-    response_file = requests.post(url, json=payload_file)
-    if response_file.status_code == 200:
-        result = response_file.json()['result']
-        if len(result) > 0:
-            return result[0]
-    response_folder = requests.post(url, json=payload_folder)
-    if response_folder.status_code == 200:
-        result = response_folder.json()['result']
-        if len(result) > 0:
-            return result[0]
-    response_project = requests.post(url, json=payload_project)
-    if response_project.status_code == 200:
-        result = response_project.json()['result']
-        if len(result) > 0:
-            return result[0]
-    return None
+    url = ConfigClass.NEO4J_SERVICE + "nodes/geid/%s"%geid
+    res = requests.get(url)
+    nodes = res.json()
+
+    if len(nodes) == 0:
+        raise Exception('Not found resource: ' + geid)
+
+    return nodes[0]
 
 
-def get_files_recursive(folder_geid, all_files=[]):
+def get_files_recursive(folder_geid, all_files=None):
+    if all_files is None:
+        all_files = []
+
     query = {
         "start_label": "Folder",
         "end_labels": ["File", "Folder"],
