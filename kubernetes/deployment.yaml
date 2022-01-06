@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
         - name: dataops-ut
-          image: 10.32.42.225:5000/dataops-ut:<VERSION>
+          image: s-hdp-vre-v007.charite.de/dataops-ut:<VERSION>
           ports:
             - containerPort: 5063
           env:
