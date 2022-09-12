@@ -1,10 +1,30 @@
+# Copyright 2022 Indoc Research
+# 
+# Licensed under the EUPL, Version 1.2 or – as soon they
+# will be approved by the European Commission - subsequent
+# versions of the EUPL (the "Licence");
+# You may not use this work except in compliance with the
+# Licence.
+# You may obtain a copy of the Licence at:
+# 
+# https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
+# 
+# Unless required by applicable law or agreed to in
+# writing, software distributed under the Licence is
+# distributed on an "AS IS" basis,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+# express or implied.
+# See the Licence for the specific language governing
+# permissions and limitations under the Licence.
+# 
+
 import requests
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from app import app
+
+from app import create_app
 from config import ConfigClass
 from resources.helpers import fetch_geid
-import os
+
 
 class SetUpTest:
     def __init__(self, log):
@@ -12,7 +32,7 @@ class SetUpTest:
         self.app = self.create_test_client()
 
     def create_test_client(self):
-        client = TestClient(app)
+        client = TestClient(create_app())
         return client
 
     def auth(self, payload=None):
@@ -20,7 +40,7 @@ class SetUpTest:
             payload = {
                 "username": "admin",
                 "password": "admin",
-                "realm": "vre"
+                "realm": ""
             }
         response = requests.post(ConfigClass.AUTH_SERVICE + "users/auth", json=payload)
         data = response.json()
@@ -30,9 +50,9 @@ class SetUpTest:
     def auth_member(self, payload=None):
         if not payload:
             payload = {
-                "username": "jzhang10",
-                "password": "CMDvrecli2021!",
-                "realm": "vre"
+                "username": "admin",
+                "password": "admin",
+                "realm": ""
             }
         response = requests.post(ConfigClass.AUTH_SERVICE + "users/auth", json=payload)
         data = response.json()
@@ -111,7 +131,7 @@ class SetUpTest:
             self.log.info(f"ERROR DELETING PROJECT: {e}")
             self.log.info(f"PLEASE DELETE THE PROJECT MANUALLY WITH ID: {node_id}")
             raise e
-    
+
     def get_id(self, label, node_geid):
         url = ConfigClass.NEO4J_SERVICE + f"nodes/{label}/query"
         payload = {
@@ -124,23 +144,9 @@ class SetUpTest:
         node_id = result["id"]
         return node_id
 
-    def create_folder(self, project_code):
-        payload = {
-              "folder_name": "test_tag_folder",
-              "zone": "vrecore",
-              "project_code": project_code,
-              "uploader": "admin",
-              "tags": []
-            }
-        response = requests.post(ConfigClass.DATA_UPLOAD_SERVICE_GREENROOM+"/folder", json=payload)
-        if response.status_code != 200 or response.json() == []:
-            self.log.info("ERROR WHILE CREATING FOLDER")
-            return None
-        return response.json()
-
     def get_project_details(self, project_code):
         try:
-            url = ConfigClass.NEO4J_SERVICE + "/nodes/Container/query"
+            url = ConfigClass.NEO4J_SERVICE + "nodes/Container/query"
             response = requests.post(url, json={"code":project_code})
             if response.status_code == 200:
                 response = response.json()
@@ -151,7 +157,7 @@ class SetUpTest:
 
     def get_folder_details(self, folder_name):
         try:
-            url = ConfigClass.NEO4J_SERVICE + "/nodes/Folder/query"
+            url = ConfigClass.NEO4J_SERVICE + "nodes/Folder/query"
             response = requests.post(url, json={"name":folder_name})
             if response.status_code == 200:
                 response = response.json()
@@ -172,10 +178,3 @@ class SetUpTest:
             self.log.info(f"ERROR DELETING FILE: {e}")
             self.log.info(f"PLEASE DELETE THE FILE MANUALLY WITH ID: {node_id}")
             raise e
-
-
-if __name__ == '__main__':
-    log="log"
-    
-    st = SetUpTest(log=log)
-    st.create_folder("unittest")

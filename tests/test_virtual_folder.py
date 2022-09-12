@@ -1,11 +1,32 @@
+# Copyright 2022 Indoc Research
+# 
+# Licensed under the EUPL, Version 1.2 or – as soon they
+# will be approved by the European Commission - subsequent
+# versions of the EUPL (the "Licence");
+# You may not use this work except in compliance with the
+# Licence.
+# You may obtain a copy of the Licence at:
+# 
+# https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
+# 
+# Unless required by applicable law or agreed to in
+# writing, software distributed under the Licence is
+# distributed on an "AS IS" basis,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+# express or implied.
+# See the Licence for the specific language governing
+# permissions and limitations under the Licence.
+# 
+
 import unittest
-from unittest import result
-from tests.logger import Logger
+
+from logger import LoggerFactory
+
 from tests.prepare_test import SetUpTest
 
-# @unittest.skip("need update")
+
 class TestVirtualFoldersCheck(unittest.TestCase):
-    log = Logger(name='test_meta_api.log')
+    log = LoggerFactory(name='test_meta_api.log').get_logger()
     test = SetUpTest(log)
     project_code = "unittest_dataops_ut_vfolders"
     container_id = ''
@@ -48,14 +69,14 @@ class TestVirtualFoldersCheck(unittest.TestCase):
             response = self.app.post("/v1/collections/", json=payload, headers=self.headers)
             self.log.info(f"POST RESPONSE: {response}")
             self.log.info(f"COMPARING: {response.status_code} VS {200}")
-            self.assertEqual(response.status_code, 200) 
+            self.assertEqual(response.status_code, 200)
         except Exception as e:
             self.log.error(e)
             raise e
         result = response.json()["result"]
         self.log.info(f"RESPONSE JSON: \n {result}")
-        self.assertEqual(result["name"], "unit_test_vfolder") 
-        self.assertTrue("global_entity_id" in result) 
+        self.assertEqual(result["name"], "unit_test_vfolder")
+        self.assertTrue("global_entity_id" in result)
         self.virtual_folder_geids.append(result["global_entity_id"])
         # self.virtual_folder_ids.append(result["id"])
 
@@ -77,8 +98,8 @@ class TestVirtualFoldersCheck(unittest.TestCase):
             raise e
         result = response.json()["result"]
         self.log.info(f"RESPONSE JSON: \n {result}")
-        self.assertEqual(result[0]["properties"]["container_id"], self.container_id) 
-        self.assertEqual(result[0]["properties"]["name"], "unit_test_vfolder") 
+        self.assertEqual(result[0]["properties"]["container_id"], self.container_id)
+        self.assertEqual(result[0]["properties"]["name"], "unit_test_vfolder")
 
 
     def test_04_post_vfolders_duplicate(self):
@@ -105,7 +126,7 @@ class TestVirtualFoldersCheck(unittest.TestCase):
         except Exception as e:
             self.log.error(e)
             raise e
-        self.assertEqual(response.json()["error_msg"], "Found duplicate folder") 
+        self.assertEqual(response.json()["error_msg"], "Found duplicate folder")
 
     def test_05_create_vfolder_admin(self):
         self.log.info("\n")
@@ -127,8 +148,8 @@ class TestVirtualFoldersCheck(unittest.TestCase):
             raise e
         result = response.json()["result"]
         self.log.info(f"POST RESPONSE: {result}")
-        self.assertEqual(result["name"], "unit_test_vfolder3") 
-        self.assertTrue("global_entity_id" in result) 
+        self.assertEqual(result["name"], "unit_test_vfolder3")
+        self.assertTrue("global_entity_id" in result)
         self.virtual_folder_geids.append(result["global_entity_id"])
         # self.virtual_folder_ids.append(result["id"])
 
@@ -154,7 +175,7 @@ class TestVirtualFoldersCheck(unittest.TestCase):
             raise e
         results = response.json()["result"]
         self.log.info(f"PUT RESPONSE {results}")
-        self.assertEqual(results[0]["global_entity_id"], self.virtual_folder_geids[0]) 
+        self.assertEqual(results[0]["global_entity_id"], self.virtual_folder_geids[0])
 
     def test_08_bulk_update_missing_attr(self):
         self.log.info("\n")
@@ -174,13 +195,13 @@ class TestVirtualFoldersCheck(unittest.TestCase):
             response = self.app.put("/v1/collections/", json=payload, headers=headers)
             self.log.info(f"POST RESPONSE: {response}")
             self.log.info(f"COMPARING: {response.status_code} VS {400}")
-            self.assertEqual(response.status_code, 400) 
+            self.assertEqual(response.status_code, 400)
         except Exception as e:
             self.log.error(e)
             raise e
         results = response.json()["result"]
         self.log.info(f"PUT results: {results}")
-        self.assertEqual(response.json()["error_msg"], "Missing required attribute geid") 
+        self.assertEqual(response.json()["error_msg"], "Missing required attribute geid")
 
     def test_09_bulk_update_admin(self):
         self.log.info("\n")
@@ -200,9 +221,9 @@ class TestVirtualFoldersCheck(unittest.TestCase):
             response = self.app.put("/v1/collections/", json=payload, headers=headers)
             self.log.info(f"POST RESPONSE: {response}")
             self.log.info(f"COMPARING: {response.status_code} VS {200}")
-            self.assertEqual(response.status_code, 200) 
+            self.assertEqual(response.status_code, 200)
         except Exception as e:
             self.log.error(e)
             raise e
         results = response.json()["result"]
-        self.assertEqual(results[0]["global_entity_id"], self.virtual_folder_geids[2]) 
+        self.assertEqual(results[0]["global_entity_id"], self.virtual_folder_geids[2])

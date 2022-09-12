@@ -1,17 +1,35 @@
-from fastapi import APIRouter, Depends
+# Copyright 2022 Indoc Research
+# 
+# Licensed under the EUPL, Version 1.2 or – as soon they
+# will be approved by the European Commission - subsequent
+# versions of the EUPL (the "Licence");
+# You may not use this work except in compliance with the
+# Licence.
+# You may obtain a copy of the Licence at:
+# 
+# https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
+# 
+# Unless required by applicable law or agreed to in
+# writing, software distributed under the Licence is
+# distributed on an "AS IS" basis,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+# express or implied.
+# See the Licence for the specific language governing
+# permissions and limitations under the Licence.
+# 
+
+import httpx
+from fastapi import APIRouter
 from fastapi_utils.cbv import cbv
+from logger import LoggerFactory
+
+from config import ConfigClass
 from models import filemeta_models as models
-from models import file_deletion_models as deletion_models
 from models.base_models import EAPIResponseCode
 from resources.cataloguing_manager import CataLoguingManager
-from resources.helpers import send_message_to_queue
-from resources.helpers import fetch_geid
-from services.service_logger.logger_factory_service import SrvLoggerFactory
 from resources.error_handler import catch_internal
-from config import ConfigClass
-import os
-import time
-import requests
+from resources.helpers import fetch_geid
+from fastapi.concurrency import run_in_threadpool
 
 router = APIRouter()
 
@@ -19,7 +37,7 @@ router = APIRouter()
 @cbv(router)
 class FiledataMeta:
     def __init__(self):
-        self._logger = SrvLoggerFactory('api_file_meta').get_logger()
+        self._logger = LoggerFactory('api_file_meta').get_logger()
 
     @router.post('/', response_model=models.FiledataMetaPOSTResponse, summary="Create or Update filedata meta")
     @catch_internal('api_file_meta')
@@ -31,7 +49,7 @@ class FiledataMeta:
         # fetch global entity id
         geid = ''
         try:
-            geid = fetch_geid('file_data')
+            geid = await run_in_threadpool(fetch_geid)
         except Exception as e:
             self._logger.error(str(e))
             api_response.result = {'Error when fetching geid'}
@@ -40,14 +58,10 @@ class FiledataMeta:
             return api_response.json_response()
 
         # create atlas entity
-        res_cata = cata_mgr.create_file_meta(data, geid)
+        res_cata = await cata_mgr.create_file_meta(data, geid)
 
         guid = res_cata['guid']
         self._logger.info(f"Request Data:{data}")
-
-        # # hack vre core raw data, if vre vore raw, data_type convert to raw
-        # if data.process_pipeline == 'data_transfer' and data.namespace == "vrecore":
-        #     data.data_type = 'raw'
 
         json_data = {
             "uploader": data.uploader,
@@ -55,7 +69,7 @@ class FiledataMeta:
             "file_size": data.file_size,
             "description": data.description,
             "namespace": data.namespace,
-            "generate_id": data.generate_id,
+            "dcm_id": data.dcm_id,
             "guid": guid,
             "tags": data.labels,
             "global_entity_id": geid,
@@ -64,9 +78,8 @@ class FiledataMeta:
             "operator": data.operator,
             "process_pipeline": data.process_pipeline,
             # minio attribute
-            "location" : "minio://%s/%s/%s"%\
-                (ConfigClass.MINIO_SERVICE, data.bucket, data.minio_object_path),
-            "display_path":data.minio_object_path,
+            "location": "minio://%s/%s/%s" % (ConfigClass.MINIO_SERVICE, data.bucket, data.minio_object_path),
+            "display_path": data.minio_object_path,
             "version_id": data.version_id
         }
         parent_query = data.parent_query
@@ -79,20 +92,34 @@ class FiledataMeta:
         dataset_data = {
             "code": data.project_code,
         }
-        response = requests.post(
-            ConfigClass.NEO4J_SERVICE + "nodes/Container/query", json=dataset_data)
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                ConfigClass.NEO4J_SERVICE + "nodes/Container/query",
+                json=dataset_data,
+                timeout=None
+            )
         if response.status_code != 200:
-            api_response.error_msg = "Get dataset id:" + str(response.json())
+            error_msg = "Get dataset id:" + str(response.__dict__)
+            self._logger.error(error_msg)
+            api_response.error_msg = error_msg
             api_response.code = EAPIResponseCode.internal_error
             return api_response.json_response()
         json_data["project_id"] = response.json()[0]["id"]
 
+        self._logger.info("Create the in atlas")
+
         # Create the file entity
-        response = requests.post(
-            ConfigClass.ENTITYINFO_SERVICE + "files", json=json_data)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                ConfigClass.ENTITYINFO_SERVICE + "files/",
+                json=json_data,
+                timeout=None
+            )
         if response.status_code != 200:
-            api_response.error_msg = "Create the file entity error:" + \
-                str(response.json())
+            error_msg = "Create the file entity error:" + str(response.__dict__)
+            self._logger.error(error_msg)
+            api_response.error_msg = error_msg
             api_response.code = EAPIResponseCode.internal_error
             return api_response.json_response()
         node = response.json()['result']
@@ -109,8 +136,12 @@ class FiledataMeta:
             if data.parent_query.get("global_entity_id"):
                 parent_query_post_form["global_entity_id"] = data.parent_query.get("global_entity_id")
             # Get parent file
-            response = requests.post(
-                ConfigClass.NEO4J_SERVICE + "nodes/File/query", json=parent_query_post_form)
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    ConfigClass.NEO4J_SERVICE+"nodes/File/query",
+                    json=parent_query_post_form,
+                    timeout=None
+                )
             self._logger.info(response.json())
             input_file_id = response.json()[0]["id"]
 
@@ -122,110 +153,13 @@ class FiledataMeta:
             }
             pipeline_name = data.process_pipeline
             self._logger.info(relation_data)
-            response = requests.post(
-                ConfigClass.NEO4J_SERVICE + f"relations/{data.process_pipeline}", json=relation_data)
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    ConfigClass.NEO4J_SERVICE+f"relations/{data.process_pipeline}",
+                    json=relation_data,
+                    timeout=None
+                )
             self._logger.info(response.json())
 
         api_response.result = node
         return api_response.json_response()
-
-    @router.delete('/', response_model=deletion_models.FiledataDeletionPOSTResponse, summary="Archive filedata",
-                   deprecated=True)
-    async def delete(self, data: deletion_models.FiledataDeletionPOST):
-        '''
-        deprecated
-        '''
-        api_response = deletion_models.FiledataDeletionPOSTResponse()
-
-        for record in data.to_delete:
-            try:
-                # Get disk path
-                namespace = record['namespace']
-                disk_path = {
-                    "greenroom": ConfigClass.NFS_ROOT_PATH,
-                    "vrecore": ConfigClass.VRE_ROOT_PATH
-                }.get(namespace, None)
-
-                if not disk_path:
-                    api_response.code = EAPIResponseCode.bad_request
-                    api_response.error_msg = "Invalid namespace: " + data.namespace
-                    return api_response.json_response()
-
-                input_path = record['path'] + "/" + record['file_name']
-
-                # Check if path valid to be deleted
-                check_url = ConfigClass.DATA_OPS_GR + "/v1/file-exists"
-                check_result = requests.post(
-                    url=check_url, json={"full_path": input_path})
-                check_res_bool = check_result.json()["result"]
-
-                if not check_res_bool:
-                    api_response.code = EAPIResponseCode.bad_request
-                    api_response.error_msg = "Invalid input path, file does not exist: " + input_path
-                    return api_response.json_response()
-
-                # Get new filename
-                file_name_split = os.path.splitext(record['file_name'])
-                new_file_name = file_name_split[0] + '_' + str(round(time.time())) + file_name_split[1] \
-                    if len(file_name_split) > 0 else file_name_split[0] + '_' + str(round(time.time()))
-
-                # Send message to the queue
-                message_payload = {
-                    "event_type": "file_delete",
-                    "payload": {
-                        "session_id": data.session_id,
-                        "job_id": data.job_id,
-                        "operator": data.operator,
-                        "input_path": input_path,
-                        "output_path": disk_path + "/TRASH/" + data.project_code + "/" + new_file_name,
-                        "trash_path": disk_path + "/TRASH",
-                        "generate_id": record.get('generate_id', 'undefined'),
-                        "generic": True,
-                        "uploader": record.get("uploader", ""),
-                        "namespace": namespace,
-                        "project": data.project_code,
-                    },
-                    "create_timestamp": time.time()
-                }
-                print("Start deleting file: " + str(message_payload))
-                res = send_message_to_queue(message_payload)
-
-                # Set status
-                status_post_json = {
-                    "session_id": data.session_id,
-                    "job_id": data.job_id,
-                    "source": input_path,
-                    "action": "data_delete",
-                    "target_status": "running",
-                    "project_code": data.project_code,
-                    "operator": data.operator,
-                    "payload": {
-                        "zone": namespace,
-                        "frontend_zone": get_frontend_zone(namespace)
-                    }
-                }
-                status_post_res = requests.post(url=ConfigClass.DATA_OPS_GR + "/v1/file/actions/status",
-                                                json=status_post_json)
-            except Exception as e:
-                api_response.code = EAPIResponseCode.internal_error
-                api_response.result = None
-                api_response.error_msg = "Error when sending tasks to the queue: " + \
-                    str(e)
-                print(api_response.error_msg)
-                return api_response.json_response()
-        api_response.code = EAPIResponseCode.success
-        api_response.result = {
-            'message': 'Succeed',
-        }
-        return api_response.json_response()
-
-
-def get_frontend_zone(my_disk_namespace: str):
-    '''
-    disk namespace to path
-    '''
-    return {
-        "greenroom": "Green Room",
-        "vre": "VRE Core",
-        "vrecore": "VRE Core"
-    }.get(my_disk_namespace, None)

@@ -18,11 +18,17 @@
 # permissions and limitations under the Licence.
 # 
 
-workers = 4
-threads = 2
-bind = '0.0.0.0:5063'
-daemon = 'false'
-worker_connections = 1200
-accesslog = 'gunicorn_access.log'
-errorlog = 'gunicorn_error.log'
-loglevel = 'debug'
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.orm import sessionmaker
+
+from config import ConfigClass
+
+engine = create_async_engine(ConfigClass.RDS_DB_URI)
+
+SessionLocal = sessionmaker(class_=AsyncSession, autocommit=False, autoflush=False, bind=engine)
+
+
+async def get_db_session() -> AsyncSession:
+    async with SessionLocal() as session:
+        yield session

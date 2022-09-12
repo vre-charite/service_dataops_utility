@@ -18,11 +18,12 @@
 # permissions and limitations under the Licence.
 # 
 
-workers = 4
-threads = 2
-bind = '0.0.0.0:5063'
-daemon = 'false'
-worker_connections = 1200
-accesslog = 'gunicorn_access.log'
-errorlog = 'gunicorn_error.log'
-loglevel = 'debug'
+from dependencies.cache import Cache
+from dependencies.cache import get_cache
+from dependencies.cache import get_redis
+
+__all__ = [
+    'Cache',
+    'get_cache',
+    'get_redis',
+]
