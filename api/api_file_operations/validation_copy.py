@@ -1,3 +1,23 @@
+# Copyright 2022 Indoc Research
+# 
+# Licensed under the EUPL, Version 1.2 or – as soon they
+# will be approved by the European Commission - subsequent
+# versions of the EUPL (the "Licence");
+# You may not use this work except in compliance with the
+# Licence.
+# You may obtain a copy of the Licence at:
+# 
+# https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
+# 
+# Unless required by applicable law or agreed to in
+# writing, software distributed under the Licence is
+# distributed on an "AS IS" basis,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+# express or implied.
+# See the Licence for the specific language governing
+# permissions and limitations under the Licence.
+# 
+
 import asyncio
 import os
 
@@ -10,26 +30,27 @@ from models.base_models import EAPIResponseCode
 from resources.helpers import get_connected_nodes
 from resources.helpers import get_resource_bygeid
 from resources.helpers import location_decoder
+from config import ConfigClass
 
 
 async def copy_validation(project_code, to_validate, destination_geid, operation, srv_redis):
     validations = []
     # validate operation lock
     await asyncio.wait([copy_thread(destination_geid, project_code, node,
-        operation, srv_redis, validations) for node in to_validate])
+                                    operation, srv_redis, validations) for node in to_validate])
     validations.sort(key=lambda v: v['is_valid'])
     return validations
 
 
 async def copy_thread(destination_geid, project_code, node,
-        operation, srv_redis, validations):
+                      operation, srv_redis, validations):
     location = node['location']
     ingestion_type, ingestion_host, ingestion_path = location_decoder(
         location)
     # get destination
     destination = None
     if destination_geid:
-        destination_folder = get_resource_bygeid(destination_geid)
+        destination_folder = await get_resource_bygeid(destination_geid)
         if not destination_folder:
             raise Exception('Not found resource: ' + destination_geid)
         destination_folder['resource_type'] = get_resource_type(
@@ -49,7 +70,7 @@ async def copy_thread(destination_geid, project_code, node,
     # get relative path to source folder
     source_folder = node.get('source_folder')
     if source_folder:
-        input_nodes = get_connected_nodes(
+        input_nodes = await get_connected_nodes(
             node["entity_geid"], "input")
         input_nodes = [
             node for node in input_nodes if 'Folder' in node['labels']]
@@ -71,7 +92,7 @@ async def copy_thread(destination_geid, project_code, node,
         destination_file_node['full_path'] = os.path.join(
             destination_prefix, node['copy_name'])
     # check target file
-    current_file_action = srv_redis.file_get_status(
+    current_file_action = await srv_redis.file_get_status(
         node['full_path'])
     is_valid = validate_operation(
         operation, current_file_action)
@@ -86,7 +107,7 @@ async def copy_thread(destination_geid, project_code, node,
         validation['error'] = 'operation-block'
 
     # check destination file
-    dest_file_action = srv_redis.file_get_status(
+    dest_file_action = await srv_redis.file_get_status(
         destination_file_node['full_path'])
     is_valid = validate_operation(
         operation, dest_file_action)
@@ -101,8 +122,8 @@ async def copy_thread(destination_geid, project_code, node,
         dest_validation['error'] = 'operation-block'
     # check copy destination repeated
     dest_location = "{}://{}/{}".format(ingestion_type, ingestion_host, destination_file_node['full_path'])
-    is_valid, found = validate_file_repeated(
-        "VRECore", project_code, dest_location)
+    is_valid, found = await validate_file_repeated(
+        ConfigClass.CORE_ZONE_LABEL, project_code, dest_location)
     if not is_valid:
         dest_validation['error'] = 'entity-exist'
         dest_validation['is_valid'] = is_valid
@@ -110,12 +131,12 @@ async def copy_thread(destination_geid, project_code, node,
         dest_validation['found_name'] = found['name']
 
 
-def repeated_check(_logger, data: models.FileOperationsPOST):
+async def repeated_check(_logger, data: models.FileOperationsPOST):
     '''
     return tuple response_code, worker_result
     '''
     # validate project
-    project_validation_code, validation_result = validate_project(
+    project_validation_code, validation_result = await validate_project(
         data.project_geid)
     if project_validation_code != EAPIResponseCode.success:
         return project_validation_code, validation_result
@@ -128,7 +149,7 @@ def repeated_check(_logger, data: models.FileOperationsPOST):
     destination_geid = payload.get('destination', None)
     node_destination = None
     if destination_geid:
-        node_destination = get_resource_bygeid(destination_geid)
+        node_destination = await get_resource_bygeid(destination_geid)
         if not node_destination:
             raise Exception('Not found resource: ' + destination_geid)
         node_destination['resource_type'] = get_resource_type(
@@ -141,12 +162,12 @@ def repeated_check(_logger, data: models.FileOperationsPOST):
     to_validate_repeat_geids = []
     repeated = []
 
-    def validate_targets(targets: list):
+    async def validate_targets(targets: list):
         fetched = []
         try:
             for target in targets:
                 # get source file
-                source = get_resource_bygeid(target['geid'])
+                source = await get_resource_bygeid(target['geid'])
                 if not source:
                     raise Exception('Not found resource: ' + target['geid'])
                 if target.get("rename"):
@@ -159,7 +180,8 @@ def repeated_check(_logger, data: models.FileOperationsPOST):
             return True, fetched
         except Exception as err:
             return False, str("validate target failed: " + str(err))
-    validated, validation_result = validate_targets(targets)
+
+    validated, validation_result = await validate_targets(targets)
     if not validated:
         return EAPIResponseCode.bad_request, validation_result
 
@@ -171,7 +193,7 @@ def repeated_check(_logger, data: models.FileOperationsPOST):
     for source in sources:
         # append path and attrs
         if source["resource_type"] == "Folder":
-            nodes_child = get_connected_nodes(
+            nodes_child = await get_connected_nodes(
                 source['global_entity_id'], "output")
             nodes_child_files = [
                 node for node in nodes_child if "File" in node["labels"]]
@@ -180,10 +202,10 @@ def repeated_check(_logger, data: models.FileOperationsPOST):
             target_folder_relative_path = ""
             if node_destination and node_destination['resource_type'] == 'Folder':
                 target_folder_relative_path = os.path.join(
-                node_destination['folder_relative_path'], node_destination['name'])
+                    node_destination['folder_relative_path'], node_destination['name'])
             output_folder_name = source.get('rename', source['name'])
-            is_valid, found = validate_folder_repeated(
-            "VRECore", project_code, target_folder_relative_path, output_folder_name)
+            is_valid, found = await validate_folder_repeated(
+                ConfigClass.CORE_ZONE_LABEL, project_code, target_folder_relative_path, output_folder_name)
             if not is_valid:
                 repeated_path = os.path.join(target_folder_relative_path, output_folder_name)
                 repeated.append({
@@ -197,7 +219,7 @@ def repeated_check(_logger, data: models.FileOperationsPOST):
             # add other attributes
             for node in nodes_child_files:
                 node['parent_folder'] = source
-                input_nodes = get_connected_nodes(
+                input_nodes = await get_connected_nodes(
                     node["global_entity_id"], "input")
                 input_nodes = [
                     node for node in input_nodes if 'Folder' in node['labels']]
@@ -233,8 +255,8 @@ def repeated_check(_logger, data: models.FileOperationsPOST):
             host = "{}://{}".format(ingestion_type, ingestion_host)
             bucket = "core-" + project_info["code"] + "/"
             dest_location = os.path.join(host, bucket + source['output_path'])
-            is_valid, found = validate_file_repeated(
-                "VRECore", project_code, dest_location)
+            is_valid, found = await validate_file_repeated(
+                ConfigClass.CORE_ZONE_LABEL, project_code, dest_location)
             if not is_valid:
                 repeated.append({
                     'error': 'entity-exist',

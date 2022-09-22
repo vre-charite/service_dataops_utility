@@ -1,1 +1,0 @@
-namespace = "dataops_ut"

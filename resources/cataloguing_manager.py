@@ -1,12 +1,32 @@
+# Copyright 2022 Indoc Research
+# 
+# Licensed under the EUPL, Version 1.2 or – as soon they
+# will be approved by the European Commission - subsequent
+# versions of the EUPL (the "Licence");
+# You may not use this work except in compliance with the
+# Licence.
+# You may obtain a copy of the Licence at:
+# 
+# https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
+# 
+# Unless required by applicable law or agreed to in
+# writing, software distributed under the Licence is
+# distributed on an "AS IS" basis,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+# express or implied.
+# See the Licence for the specific language governing
+# permissions and limitations under the Licence.
+# 
+
 from config import ConfigClass
 import requests
 from models import filemeta_models as models
+import httpx
 
 class CataLoguingManager:
     base_url = ConfigClass.CATALOGUING_SERVICE_V2
-    def create_file_meta(self, post_form: models.FiledataMetaPOST, geid):
+    async def create_file_meta(self, post_form: models.FiledataMetaPOST, geid):
         filedata_endpoint = 'filedata'
-        print(post_form.labels)
         req_postform = {
             "uploader": post_form.uploader,
             "file_name": post_form.file_name,
@@ -20,7 +40,13 @@ class CataLoguingManager:
             "operator": post_form.operator,
             "processed_pipeline": post_form.process_pipeline
         }
-        res = requests.post(json=req_postform, url=self.base_url + filedata_endpoint)
+        
+        async with httpx.AsyncClient() as client:
+            res = await client.post(
+                json=req_postform, 
+                url=self.base_url + filedata_endpoint,
+                timeout=None
+            )
         if res.status_code == 200:
             json_payload = res.json()
             created_entity = None

@@ -1,17 +1,35 @@
-import shutil
-import unittest
-from unittest import result
-from tests.logger import Logger
-from tests.prepare_test import SetUpTest
-import os
-from config import ConfigClass
+# Copyright 2022 Indoc Research
+# 
+# Licensed under the EUPL, Version 1.2 or – as soon they
+# will be approved by the European Commission - subsequent
+# versions of the EUPL (the "Licence");
+# You may not use this work except in compliance with the
+# Licence.
+# You may obtain a copy of the Licence at:
+# 
+# https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
+# 
+# Unless required by applicable law or agreed to in
+# writing, software distributed under the Licence is
+# distributed on an "AS IS" basis,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+# express or implied.
+# See the Licence for the specific language governing
+# permissions and limitations under the Licence.
+# 
 
+import unittest
+
+from logger import LoggerFactory
+
+from tests.prepare_test import SetUpTest
 
 default_project_code = "dataops_utility_system_tag"
 default_folder_name = "test_tag_folder"
 
+
 def setUpModule():
-    _log = Logger(name='test_api_sys_tags.log')
+    _log = LoggerFactory(name='test_api_sys_tags.log').get_logger()
     _test = SetUpTest(_log)
     project_details = _test.get_project_details(default_project_code)
     if len(project_details) > 0:
@@ -23,11 +41,13 @@ def setUpModule():
         folder_id = folder_details[0]['id']
         if folder_id:
             _test.delete_folder_node(folder_id)
+
+
 @unittest.skip('need update')
 class TestAPISYSTags(unittest.TestCase):
     container = None
     folder = None
-    log = Logger(name='test_api_sys_tags.log')
+    log = LoggerFactory(name='test_api_sys_tags.log').get_logger()
     test = SetUpTest(log)
     project_code = "dataops_utility_system_tag"
     container_id = ''
@@ -43,12 +63,12 @@ class TestAPISYSTags(unittest.TestCase):
             cls.container = cls.test.create_project(cls.project_code, name="DataopsUTUnitTestTags")
             cls.container_geid = cls.container["global_entity_id"]
             cls.container_id = cls.container["id"]
-            cls.folder = cls.test.create_folder(cls.project_code)
+            #cls.folder = cls.test.create_folder(cls.project_code)
             cls.folder_name = cls.folder.get("result")["name"]
             cls.folder_id = cls.folder.get("result")['id']
             print(cls.folder.get("result")["global_entity_id"])
-            if cls.folder is not None:
-                cls.folder_geid = cls.folder.get("result")["global_entity_id"]
+            #if cls.folder is not None:
+                #cls.folder_geid = cls.folder.get("result")["global_entity_id"]
         except Exception as e:
             cls.log.error(f"Failed set up test due to error: {e}")
             raise Exception(f"Failed setup test {e}")

@@ -1,12 +1,32 @@
+# Copyright 2022 Indoc Research
+# 
+# Licensed under the EUPL, Version 1.2 or – as soon they
+# will be approved by the European Commission - subsequent
+# versions of the EUPL (the "Licence");
+# You may not use this work except in compliance with the
+# Licence.
+# You may obtain a copy of the Licence at:
+# 
+# https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
+# 
+# Unless required by applicable law or agreed to in
+# writing, software distributed under the Licence is
+# distributed on an "AS IS" basis,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+# express or implied.
+# See the Licence for the specific language governing
+# permissions and limitations under the Licence.
+# 
+
 from typing import Optional
 
 from fastapi import APIRouter
 from fastapi import Header
 from fastapi_utils.cbv import cbv
+from logger import LoggerFactory
 
 from api.api_file_operations.copy_dispatcher import CopyDispatcher
 from api.api_file_operations.delete_dispatcher import DeleteDispatcher
-from commons.logger_services.logger_factory_service import SrvLoggerFactory
 from models import file_ops_models as models
 from models.base_models import APIResponse
 from models.base_models import EAPIResponseCode
@@ -18,7 +38,7 @@ router = APIRouter()
 @cbv(router)
 class FileOperations:
     def __init__(self):
-        self._logger = SrvLoggerFactory('api_file_operations').get_logger()
+        self._logger = LoggerFactory('api_file_operations').get_logger()
 
     @router.post(
         '/',
@@ -51,7 +71,7 @@ class FileOperations:
             api_response.error_msg = 'Invalid operation'
             return api_response.json_response()
 
-        code, result = job_dispatcher().execute(self._logger, data, token)
+        code, result = await job_dispatcher().execute(self._logger, data, token)
         api_response.code = code
         if not api_response.code == EAPIResponseCode.accepted:
             api_response.error_msg = 'Error occurred'
